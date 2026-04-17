@@ -39,22 +39,93 @@ l2i_tlb:u             l2i_tlb_refill:u
 
 `miss_rate`、`mpki` 等比率指标不进入线性空间，而是从最终 raw count 反推得到。这样做的原因是比率不满足线性叠加，直接拟合会引入系统性误差。
 
+
 ### 求解过程
 
-给定目标向量 $\mathbf{t} \in \mathbb{R}^{11}$，从候选模板库中选不超过 `max_templates` 个模板 $\{\mathbf{v}_i\}$，求非负系数 $\{k_i\}$，使得：
+给定目标向量 $\mathbf{t} \in \mathbb{R}^{11}$，从单模块参数库（每个模块 sweep 后的 CSV）中选出不超过 `max_templates` 个模板 $\{\mathbf{v}_i\}$，通过如下步骤拟合：
 
-$$\left(1 - \epsilon\right) \mathbf{t} \leq \sum_i k_i \mathbf{v}_i \leq \left(1 + \epsilon\right) \mathbf{t}$$
+1. **构建候选集**：所有单模块 case 的 11 维 raw count 作为候选模板。
+2. **稀疏组合搜索**：采用启发式 beam search（宽度受限的分支枚举），枚举所有组合方式，目标是找到一组非负系数 $\{k_i\}$，使得 $\sum_i k_i \mathbf{v}_i$ 尽量逼近 $\mathbf{t}$，并且 $k_i$ 尽量稀疏（大部分为 0）。
+3. **容差约束**：允许每一维 raw count 有 $\pm\epsilon$（如 10%）的容差。
+4. **连续到整数量化**：先在连续空间求解 $k_i$，再量化为整数 repeat plan，保证实际回放可用。
+5. **输出 top-k 结果**：保存所有满足容差的 top-k 组合，供后续 bench 回放和真机验证。
 
-其中 $\epsilon$ 为容差（默认 10%）。连续系数 $k_i$ 最后量化为整数 `repeat_count`。
 
-### 分阶段搜索策略
+**主流程代码片段（实际实现，见 fit/raw_count_sparse_solver.py）：**
+```python
+def search_repeat_plan(target_vec, candidate_matrix, max_templates, tol, topk):
+  # 1. 枚举所有不超过 max_templates 的稀疏组合（beam search）
+  for combo in beam_search_candidates(candidate_matrix, max_templates):
+    # 2. 用 MILP 求解整数 repeat 方案
+    repeat_plan, loss = solve_milp(combo, target_vec, tol)
+    if repeat_plan is not None:
+      # 3. 检查误差是否满足容差，保存 top-k
+      if loss < tol:
+        results.append((repeat_plan, loss, combo))
+  # 4. 按 loss 排序，输出 top-k 方案
+  return sorted(results, key=lambda x: x[1])[:topk]
 
-求解器按以下顺序逐步加入模块家族，每阶段用 beam search 保留最优状态集：
+# 其中 beam_search_candidates 负责组合空间剪枝，solve_milp 调用 pulp/cbc 求解整数规划：
+def solve_milp(combo, target_vec, tol):
+  # combo: (n, 11) matrix, target_vec: (11,)
+  prob = pulp.LpProblem("repeat_plan", pulp.LpMinimize)
+  k_vars = [pulp.LpVariable(f"k_{i}", lowBound=0, cat="Integer") for i in range(len(combo))]
+  # 目标函数：加权 L1/L2 距离
+  loss_terms = []
+  for j in range(11):
+    pred_j = pulp.lpSum([combo[i][j] * k_vars[i] for i in range(len(combo))])
+    loss_terms.append(abs(pred_j - target_vec[j]))
+    # 容差约束
+    prob += pred_j >= target_vec[j] * (1 - tol)
+    prob += pred_j <= target_vec[j] * (1 + tol)
+  prob += pulp.lpSum(loss_terms)
+  # 求解
+  status = prob.solve()
+  if status == pulp.LpStatusOptimal:
+    repeat_plan = [int(k.value()) for k in k_vars]
+    loss = pulp.value(prob.objective)
+    return repeat_plan, loss
+  return None, None
+```
+> 详细实现见 fit/raw_count_sparse_solver.py，beam_search_candidates 负责高效枚举稀疏组合，solve_milp 用 pulp/cbc 求解整数 repeat 方案。
 
-1. `itlb` — 先定住 L2-TLB refill 骨架
-2. `cold_block_sequence` — 补 TLB access 和 I-cache refill
-3. `fetch_amplifier` — 补 L1 I-cache access
-4. `hot_region_loop` — 最后修 branch 计数
+---
+
+## 拟合策略与Loss判定
+
+### 搜索与权重设计
+
+- **候选集**：所有单模块 sweep 得到的 11 维 raw count 向量（如 output/*.csv，每一行一个case）。
+- **稀疏组合策略**：
+  - 采用启发式 beam search（宽度受限的分支枚举），枚举所有不超过 max_templates 个模板的组合。
+  - 每组组合都用混合整数规划（MILP）求解权重 $k_i$，而不是NNLS。
+  - 权重 $k_i$ 物理意义是“该模块case需要重复多少次”，直接为整数。
+  - MILP 可灵活加约束（如稀疏度、最大误差、模板家族等），并能直接输出整数 repeat plan。
+
+### Loss函数与优劣判定
+
+- **Loss定义**：
+  - 默认采用加权 L1/L2 距离：
+    $$ Loss = \sum_{j=1}^{11} w_j \cdot |\hat{y}_j - t_j| $$
+    其中 $\hat{y}_j$ 是组合预测的第 j 维计数，$t_j$ 是目标向量，$w_j$ 是每一维的权重。
+  - 权重 $w_j$ 可根据实际关注的指标调整（如更关注 miss/refill 就加大对应权重）。
+  - 也可采用最大相对误差（box violation）作为判据。
+- **判定更优解**：
+  - Loss 越小越优。
+  - 若所有维度都在容差范围内（如 10%），则优先选用稀疏度更高（用的模板更少）的解。
+  - 支持输出 top-k 方案，供人工或自动后处理。
+
+### 真实数据举例
+
+以 cold_block_sequence 为例：
+
+| case | direct_run_len | layout | instructions | br_retired | l1i_cache | l2i_cache |
+|------|---------------|--------|--------------|------------|-----------|-----------|
+| cold_b1000_d1_linear | 1 | linear | 28170342 | 3049385 | 21474922 | 7551 |
+| cold_b1000_d8_linear | 8 | linear | 17671726 | 1299790 | 3077464 | 5707 |
+| cold_b1000_d1_bitrev | 1 | in_page_shuffle | 28170340 | 3049385 | 18892524 | 10872 |
+
+不同参数 sweep，向量方向和量级差异明显。
 
 ---
 
@@ -348,4 +419,11 @@ output/                       CSV、JSON、日志输出
 - `miss_rate` 和 `mpki` 不参与线性求解，由最终 raw count 反推。
 - `cpu-cycles:u` 不进入 11 维求解空间，`ipc` 同理。
 - 热模块（`fetch_amplifier`、`hot_region_loop`）的低 MPKI 计数（如极小的 refill）在重复多次时不线性增长，求解器对此有特殊处理。
-- `coefficient` 是连续系数，`repeat_count` 是量化后的整数版本，两者不同。
+
+- Beam search 负责在组合空间中高效筛选 promising 的模板子集，避免暴力枚举。
+  - 每个候选组合都建模为一个混合整数线性规划（MILP）问题：
+    - 变量 $k_i$ 为每个模板的整数 repeat 次数。
+    - 目标函数为加权 L1/L2 距离 Loss，或最大相对误差。
+    - 约束包括：所有维度误差在容差范围内、模板数不超过 max_templates、可选家族/类型限制等。
+  - MILP 求解后直接得到整数 repeat plan，无需再做连续到整数的量化。
+  - 这种方法相比传统 NNLS 或贪心法，能更好地控制稀疏度、误差和实际可用性。
