@@ -13,6 +13,9 @@ FIT_CONFIG = {
     "output_dir": PROJECT_ROOT / "output",
     "csv_files": [
         "cold_block_sequence.csv",
+        "data_hot_stride.csv",
+        "data_cold_stride.csv",
+        "data_tlb_indirect.csv",
         "fetch_amplifier.csv",
         "hot_region_loop.csv",
         "itlb.csv",

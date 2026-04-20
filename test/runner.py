@@ -171,13 +171,16 @@ def run_random_combo_suite(base_cfg, knobs, metric_keys, suite_cfg, output_dir):
     csv_headers = build_headers(metric_keys, base_cfg)
     csv_out = output_dir / suite_cfg["csv_name"]
     case_groups = suite_cfg["module_case_groups"]
+    sample_count = suite_cfg.get("samples_per_size")
+    if sample_count is None:
+        sample_count = suite_cfg.get("total_groups", 0)
 
     rng = random.Random(base_cfg["build"]["seed"])
     for combo_size in suite_cfg.get("combo_sizes", []):
         case_sets = choose_random_case_sets(
             case_groups,
             combo_size,
-            suite_cfg.get("samples_per_size", 0),
+            sample_count,
             rng,
         )
         for combo_index, selected_cases in enumerate(case_sets):

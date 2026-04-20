@@ -33,6 +33,36 @@ HOT_REGION_LOOP_SIZES = [4096, 8192]
 HOT_REGION_LOOP_REPS = [1000]
 HOT_REGION_LOOP_BRANCH_PAIRS = [0, 1, 2, 3, 4]
 
+DATA_STREAM_SIZES = [8 * 1024, 64 * 1024, 512 * 1024, 4 * 1024 * 1024]
+DATA_STREAM_STRIDES = [64, 256, 4096]
+DATA_STREAM_REGION_REPS = [16]
+
+DATA_POINTER_CHASE_PAGES = [32, 128, 512, 2048]
+DATA_POINTER_CHASE_LINES_PER_PAGE = [1, 4]
+DATA_POINTER_CHASE_REGION_REPS = [16]
+
+DATA_PAGE_STRIDE_PAGES = [32, 128, 512, 2048]
+DATA_PAGE_STRIDE_PAGE_STRIDES = [1, 17]
+DATA_PAGE_STRIDE_LINE_INDICES = [0, 7]
+DATA_PAGE_STRIDE_REGION_REPS = [16]
+
+DATA_INDIRECT_GATHER_PAGES = [32, 128, 512, 2048]
+DATA_INDIRECT_GATHER_LINES_PER_PAGE = [1, 4]
+DATA_INDIRECT_GATHER_INDEX_STRIDES = [1, 5]
+DATA_INDIRECT_GATHER_REGION_REPS = [16]
+
+DATA_HOT_STRIDE_ACCESS_COUNTS = [64, 128]
+DATA_HOT_STRIDE_STRIDES = [4, 8, 16]
+DATA_HOT_STRIDE_REGION_REPS = [16]
+
+DATA_COLD_STRIDE_ACCESS_COUNTS = [1024, 4096]
+DATA_COLD_STRIDE_STRIDES = [256, 4096]
+DATA_COLD_STRIDE_REGION_REPS = [16]
+
+DATA_TLB_INDIRECT_PAGES = [64, 128, 256, 512]
+DATA_TLB_INDIRECT_LINE_INDICES = [0, 7]
+DATA_TLB_INDIRECT_REGION_REPS = [16]
+
 # ITLB_FUNCS = [128, 256, 512, 1024, 2048, 4096]
 ITLB_FUNCS = [256, 512, 1024, 2048, 4096, 8192]
 # ITLB_REGION_REPS = [1, 2, 4, 8]
@@ -78,6 +108,94 @@ MODULE_CASE_GROUPS = {
         for branch_pairs_per_unit in HOT_REGION_LOOP_BRANCH_PAIRS
         for region_reps in HOT_REGION_LOOP_REPS
     ],
+    "data_stream": [
+        make_case(
+            f"dstream_s{size}_st{stride}_r{region_reps}",
+            "data_stream",
+            size=size,
+            stride=stride,
+            region_reps=region_reps,
+        )
+        for size in DATA_STREAM_SIZES
+        for stride in DATA_STREAM_STRIDES
+        for region_reps in DATA_STREAM_REGION_REPS
+    ],
+    "data_pointer_chase": [
+        make_case(
+            f"dptr_p{pages}_l{lines_per_page}_r{region_reps}",
+            "data_pointer_chase",
+            pages=pages,
+            lines_per_page=lines_per_page,
+            region_reps=region_reps,
+        )
+        for pages in DATA_POINTER_CHASE_PAGES
+        for lines_per_page in DATA_POINTER_CHASE_LINES_PER_PAGE
+        for region_reps in DATA_POINTER_CHASE_REGION_REPS
+    ],
+    "data_page_stride": [
+        make_case(
+            f"dpage_p{pages}_ps{page_stride}_li{line_index}_r{region_reps}",
+            "data_page_stride",
+            pages=pages,
+            page_stride=page_stride,
+            line_index=line_index,
+            region_reps=region_reps,
+        )
+        for pages in DATA_PAGE_STRIDE_PAGES
+        for page_stride in DATA_PAGE_STRIDE_PAGE_STRIDES
+        for line_index in DATA_PAGE_STRIDE_LINE_INDICES
+        for region_reps in DATA_PAGE_STRIDE_REGION_REPS
+    ],
+    "data_indirect_gather": [
+        make_case(
+            f"dgather_p{pages}_l{lines_per_page}_is{index_stride}_r{region_reps}",
+            "data_indirect_gather",
+            pages=pages,
+            lines_per_page=lines_per_page,
+            index_stride=index_stride,
+            region_reps=region_reps,
+        )
+        for pages in DATA_INDIRECT_GATHER_PAGES
+        for lines_per_page in DATA_INDIRECT_GATHER_LINES_PER_PAGE
+        for index_stride in DATA_INDIRECT_GATHER_INDEX_STRIDES
+        for region_reps in DATA_INDIRECT_GATHER_REGION_REPS
+    ],
+    "data_hot_stride": [
+        make_case(
+            f"dhot_a{access_count}_st{stride}_r{region_reps}",
+            "data_hot_stride",
+            access_count=access_count,
+            stride=stride,
+            region_reps=region_reps,
+        )
+        for access_count in DATA_HOT_STRIDE_ACCESS_COUNTS
+        for stride in DATA_HOT_STRIDE_STRIDES
+        for region_reps in DATA_HOT_STRIDE_REGION_REPS
+    ],
+    "data_cold_stride": [
+        make_case(
+            f"dcold_a{access_count}_st{stride}_r{region_reps}",
+            "data_cold_stride",
+            access_count=access_count,
+            stride=stride,
+            region_reps=region_reps,
+        )
+        for access_count in DATA_COLD_STRIDE_ACCESS_COUNTS
+        for stride in DATA_COLD_STRIDE_STRIDES
+        for region_reps in DATA_COLD_STRIDE_REGION_REPS
+    ],
+    "data_tlb_indirect": [
+        make_case(
+            f"dtlb_p{pages}_li{line_index}_r{region_reps}",
+            "data_tlb_indirect",
+            pages=pages,
+            line_index=line_index,
+            region_reps=region_reps,
+        )
+        for pages in DATA_TLB_INDIRECT_PAGES
+        for line_index in DATA_TLB_INDIRECT_LINE_INDICES
+        for region_reps in DATA_TLB_INDIRECT_REGION_REPS
+    ],
     "fetch_amplifier": [
         make_case(
             f"fetch_b{blocks}_d{direct_run_len}_bp{branch_pairs_per_block}_s{block_slots}_r{region_reps}",
@@ -112,6 +230,34 @@ MODULE_CASE_GROUPS = {
 }
 
 
+# 主线 data 模块：和 icache 侧一样，强调 hot / cold / tlb 三类行为。
+ACTIVE_DATA_MODULE_CASE_GROUPS = {
+    "data_hot_stride": MODULE_CASE_GROUPS["data_hot_stride"],
+    "data_cold_stride": MODULE_CASE_GROUPS["data_cold_stride"],
+    "data_tlb_indirect": MODULE_CASE_GROUPS["data_tlb_indirect"],
+}
+
+# 旧 data 模块保留做历史对照和单独实验，不再作为默认主线命名。
+LEGACY_DATA_MODULE_CASE_GROUPS = {
+    "data_stream": MODULE_CASE_GROUPS["data_stream"],
+    "data_pointer_chase": MODULE_CASE_GROUPS["data_pointer_chase"],
+    "data_page_stride": MODULE_CASE_GROUPS["data_page_stride"],
+    "data_indirect_gather": MODULE_CASE_GROUPS["data_indirect_gather"],
+}
+
+ACTIVE_MODULE_CASE_GROUPS = {
+    "cold_block_sequence": MODULE_CASE_GROUPS["cold_block_sequence"],
+    "hot_region_loop": MODULE_CASE_GROUPS["hot_region_loop"],
+    "data_hot_stride": MODULE_CASE_GROUPS["data_hot_stride"],
+    "data_cold_stride": MODULE_CASE_GROUPS["data_cold_stride"],
+    "data_tlb_indirect": MODULE_CASE_GROUPS["data_tlb_indirect"],
+    "fetch_amplifier": MODULE_CASE_GROUPS["fetch_amplifier"],
+    "itlb": MODULE_CASE_GROUPS["itlb"],
+}
+
+DCACHE_MODULE_CASE_GROUPS = ACTIVE_DATA_MODULE_CASE_GROUPS
+
+
 def flatten_case_groups(case_groups):
     cases = []
     for module_name, module_cases in case_groups.items():
@@ -135,8 +281,27 @@ RANDOM_COMBO_SUITE = {
     "artifact_stem": "random_combo_probe",
     "csv_name": "random_combo_probe.csv",
     "module_case_groups": MODULE_CASE_GROUPS,
-    "combo_sizes": [2, 3, 4, 5],
-    "total_groups": 10,
+    "combo_sizes": [2, 3, 4, 5, 6],
+    "samples_per_size": 10,
+    "shuffle_rounds": 1,
+}
+
+
+DCACHE_LIBRARY_SUITE = {
+    "name": "dcache_library",
+    "artifact_stem": "dcache_library",
+    "csv_name": "dcache_library.csv",
+    "cases": flatten_case_groups(DCACHE_MODULE_CASE_GROUPS),
+}
+
+
+DCACHE_LINEARITY_SUITE = {
+    "name": "dcache_linearity",
+    "artifact_stem": "dcache_linearity_probe",
+    "csv_name": "dcache_linearity.csv",
+    "module_case_groups": DCACHE_MODULE_CASE_GROUPS,
+    "combo_sizes": [2, 3],
+    "samples_per_size": 12,
     "shuffle_rounds": 1,
 }
 

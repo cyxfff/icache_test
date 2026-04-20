@@ -16,13 +16,13 @@ if __package__ in (None, ""):
     from config import build_base_cfg, build_knobs
     from fitter_config import FIT_CONFIG
     from fitter import load_candidates
-    from utils import calc_derived, compile_bin, parse_hiperf_metrics, run_remote_runner, write_csv_row
+    from utils import calc_derived, compile_bin, parse_runner_metrics, run_benchmark_runner, write_csv_row
 else:
     from .combo_codegen import generate_combo_source, write_combo_source
     from ..config import build_base_cfg, build_knobs
     from .fitter_config import FIT_CONFIG
     from .fitter import load_candidates
-    from ..utils import calc_derived, compile_bin, parse_hiperf_metrics, run_remote_runner, write_csv_row
+    from ..utils import calc_derived, compile_bin, parse_runner_metrics, run_benchmark_runner, write_csv_row
 
 
 VALIDATE_CONFIG = {
@@ -178,25 +178,31 @@ def run_combo_instances(instances, knobs, base_cfg):
     write_combo_source(knobs["out_c"], source)
     compile_bin(
         knobs["cc"],
-        knobs["sysroot"],
-        knobs["extra_cflags"],
         knobs["out_c"],
         knobs["out_bin"],
         {"opt_level": base_cfg["build"]["opt_level"]},
+        target=knobs.get("target"),
+        sysroot=knobs.get("sysroot"),
+        extra_cflags=knobs.get("extra_cflags"),
+        extra_ldflags=knobs.get("extra_ldflags"),
     )
-    output = run_remote_runner(
-        knobs["hdc"],
-        knobs["remote_workdir"],
-        knobs["runner_sh"],
-        knobs["out_bin"],
+    output = run_benchmark_runner(
+        knobs,
         {
             "iters": base_cfg["run"]["iters"],
             "rounds": base_cfg["run"]["rounds"],
             "cpu_core": base_cfg["run"]["cpu_core"],
         },
-        knobs.get("runner_env", {}),
     )
-    metrics = parse_hiperf_metrics(output, knobs["events"])
+    metrics = parse_runner_metrics(
+        output,
+        knobs["events"],
+        knobs["metric_groups"],
+        knobs["metric_aliases"],
+        normalize_to_event=knobs.get("normalize_to_event"),
+        group_marker=knobs.get("group_marker", "===== perf group ====="),
+        runner_label=Path(knobs["runner_sh"]).name,
+    )
     derived = calc_derived(metrics)
     row = {}
     row.update(metrics)
@@ -271,6 +277,11 @@ def metric_display_order(target):
         "l2i_miss_rate",
         "l1i_tlb_miss_rate",
         "l2i_tlb_miss_rate",
+        "l1d_miss_rate",
+        "l2d_miss_rate",
+        "l1d_tlb_miss_rate",
+        "l2d_tlb_miss_rate",
+        "ll_miss_rate",
     ]
     other_metrics = [
         "br_mis_pred_mpki",
@@ -283,6 +294,16 @@ def metric_display_order(target):
         "l1i_tlb_refill_mpki",
         "l2i_tlb_mpki",
         "l2i_tlb_refill_mpki",
+        "l1d_cache_mpki",
+        "l1d_cache_refill_mpki",
+        "l2d_cache_mpki",
+        "l2d_cache_refill_mpki",
+        "l1d_tlb_mpki",
+        "l1d_tlb_refill_mpki",
+        "l2d_tlb_mpki",
+        "l2d_tlb_refill_mpki",
+        "ll_cache_mpki",
+        "ll_cache_miss_mpki",
         "ipc",
         "instructions:u",
     ]

@@ -3,6 +3,7 @@
 import csv
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -13,46 +14,6 @@ if __package__ in (None, ""):
 else:
     from .config import flatten_cfg
     from .pipeline import MAIN_LAYOUT_CHOICES, generate_from_flat_cfg
-
-
-RAW_EVENT_GROUPS = [
-    [
-        "raw-cpu-cycles:u",
-        "raw-instruction-retired:u",
-        "raw-br-mis-pred:u",
-        "raw-br-retired:u",
-    ],
-    [
-        "raw-instruction-retired:u",
-        "raw-l1-icache:u",
-        "raw-l1-icache-refill:u",
-        "raw-l2-icache:u",
-        "raw-l2-icache-refill:u",
-    ],
-    [
-        "raw-instruction-retired:u",
-        "raw-l1-itlb:u",
-        "raw-l1-itlb-refill:u",
-        "raw-l2-itlb:u",
-        "raw-l2-itlb-refill:u",
-    ],
-]
-
-
-RAW_TO_CANONICAL = {
-    "raw-cpu-cycles:u": "cpu-cycles:u",
-    "raw-instruction-retired:u": "instructions:u",
-    "raw-br-retired:u": "br_retired:u",
-    "raw-br-mis-pred:u": "br_mis_pred:u",
-    "raw-l1-icache:u": "l1i_cache:u",
-    "raw-l1-icache-refill:u": "l1i_cache_refill:u",
-    "raw-l2-icache:u": "l2i_cache:u",
-    "raw-l2-icache-refill:u": "l2i_cache_refill:u",
-    "raw-l1-itlb:u": "l1i_tlb:u",
-    "raw-l1-itlb-refill:u": "l1i_tlb_refill:u",
-    "raw-l2-itlb:u": "l2i_tlb:u",
-    "raw-l2-itlb-refill:u": "l2i_tlb_refill:u",
-}
 
 
 def run_cmd(cmd, check=True, capture=True, cwd=None, env=None):
@@ -108,22 +69,22 @@ def parse_perf_stat(text, events):
     return result
 
 
-def split_perf_groups(text):
-    return [part for part in text.split("===== perf group =====")[1:]]
+def split_perf_groups(text, marker="===== perf group ====="):
+    return [part for part in text.split(marker)[1:]]
 
 
-def normalize_metrics_to_ref_instructions(metrics, ref_instructions):
-    current_instructions = metrics.get("raw-instruction-retired:u")
-    if current_instructions in (None, 0) or ref_instructions in (None, 0):
+def normalize_metrics_to_ref_event(metrics, ref_value, ref_event):
+    current_value = metrics.get(ref_event)
+    if current_value in (None, 0) or ref_value in (None, 0):
         return metrics.copy()
 
-    scale = ref_instructions / current_instructions
+    scale = ref_value / current_value
     normalized = {}
     for key, value in metrics.items():
         if value is None:
             normalized[key] = None
-        elif key == "raw-instruction-retired:u":
-            normalized[key] = ref_instructions
+        elif key == ref_event:
+            normalized[key] = ref_value
         else:
             normalized[key] = int(round(value * scale))
     return normalized
@@ -133,7 +94,7 @@ def merge_metric_dicts(metric_dicts):
     merged = {}
     for metric_dict in metric_dicts:
         for key, value in metric_dict.items():
-            if value is not None:
+            if value is not None and merged.get(key) is None:
                 merged[key] = value
     return merged
 
@@ -162,6 +123,11 @@ def calc_derived(metrics):
         "l1i_tlb_miss_rate": div(metrics.get("l1i_tlb_refill:u"), metrics.get("l1i_tlb:u")),
         "l2i_miss_rate": div(metrics.get("l2i_cache_refill:u"), metrics.get("l2i_cache:u")),
         "l2i_tlb_miss_rate": div(metrics.get("l2i_tlb_refill:u"), metrics.get("l2i_tlb:u")),
+        "l1d_miss_rate": div(metrics.get("l1d_cache_refill:u"), metrics.get("l1d_cache:u")),
+        "l1d_tlb_miss_rate": div(metrics.get("l1d_tlb_refill:u"), metrics.get("l1d_tlb:u")),
+        "l2d_miss_rate": div(metrics.get("l2d_cache_refill:u"), metrics.get("l2d_cache:u")),
+        "l2d_tlb_miss_rate": div(metrics.get("l2d_tlb_refill:u"), metrics.get("l2d_tlb:u")),
+        "ll_miss_rate": div(metrics.get("ll_cache_miss:u"), metrics.get("ll_cache:u")),
         "br_retired_mpki": mpki("br_retired:u"),
         "br_mis_pred_mpki": mpki("br_mis_pred:u"),
         "l1i_cache_mpki": mpki("l1i_cache:u"),
@@ -172,6 +138,16 @@ def calc_derived(metrics):
         "l2i_cache_refill_mpki": mpki("l2i_cache_refill:u"),
         "l2i_tlb_mpki": mpki("l2i_tlb:u"),
         "l2i_tlb_refill_mpki": mpki("l2i_tlb_refill:u"),
+        "l1d_cache_mpki": mpki("l1d_cache:u"),
+        "l1d_cache_refill_mpki": mpki("l1d_cache_refill:u"),
+        "l1d_tlb_mpki": mpki("l1d_tlb:u"),
+        "l1d_tlb_refill_mpki": mpki("l1d_tlb_refill:u"),
+        "l2d_cache_mpki": mpki("l2d_cache:u"),
+        "l2d_cache_refill_mpki": mpki("l2d_cache_refill:u"),
+        "l2d_tlb_mpki": mpki("l2d_tlb:u"),
+        "l2d_tlb_refill_mpki": mpki("l2d_tlb_refill:u"),
+        "ll_cache_mpki": mpki("ll_cache:u"),
+        "ll_cache_miss_mpki": mpki("ll_cache_miss:u"),
         "l2i_cache_access_proxy_mpki": safe_div(
             mpki("l2i_cache_refill:u"),
             div(metrics.get("l2i_cache_refill:u"), metrics.get("l2i_cache:u")),
@@ -235,6 +211,21 @@ def format_derived_summary(derived):
         f"l2i_miss_rate={format_value(derived.get('l2i_miss_rate'), 6)}",
         f"l1i_tlb_miss_rate={format_value(derived.get('l1i_tlb_miss_rate'), 6)}",
         f"l2i_tlb_miss_rate={format_value(derived.get('l2i_tlb_miss_rate'), 6)}",
+        f"l1d_cache_mpki={format_value(derived.get('l1d_cache_mpki'), 4)}",
+        f"l1d_cache_refill_mpki={format_value(derived.get('l1d_cache_refill_mpki'), 4)}",
+        f"l1d_tlb_mpki={format_value(derived.get('l1d_tlb_mpki'), 4)}",
+        f"l1d_tlb_refill_mpki={format_value(derived.get('l1d_tlb_refill_mpki'), 4)}",
+        f"l2d_cache_mpki={format_value(derived.get('l2d_cache_mpki'), 4)}",
+        f"l2d_cache_refill_mpki={format_value(derived.get('l2d_cache_refill_mpki'), 4)}",
+        f"l2d_tlb_mpki={format_value(derived.get('l2d_tlb_mpki'), 4)}",
+        f"l2d_tlb_refill_mpki={format_value(derived.get('l2d_tlb_refill_mpki'), 4)}",
+        f"ll_cache_mpki={format_value(derived.get('ll_cache_mpki'), 4)}",
+        f"ll_cache_miss_mpki={format_value(derived.get('ll_cache_miss_mpki'), 4)}",
+        f"l1d_miss_rate={format_value(derived.get('l1d_miss_rate'), 6)}",
+        f"l2d_miss_rate={format_value(derived.get('l2d_miss_rate'), 6)}",
+        f"l1d_tlb_miss_rate={format_value(derived.get('l1d_tlb_miss_rate'), 6)}",
+        f"l2d_tlb_miss_rate={format_value(derived.get('l2d_tlb_miss_rate'), 6)}",
+        f"ll_miss_rate={format_value(derived.get('ll_miss_rate'), 6)}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -255,22 +246,36 @@ def generate_c(out_c, cfg):
     generate_from_flat_cfg(out_c, cfg)
 
 
-def compile_bin(cc, sysroot, extra_cflags, out_c, out_bin, cfg):
+def compile_bin(
+    cc,
+    out_c,
+    out_bin,
+    cfg,
+    target=None,
+    sysroot=None,
+    extra_cflags=None,
+    extra_ldflags=None,
+):
     ensure_parent_dir(out_bin)
-    cmd = [
-        cc,
-        "-target",
-        "aarch64-linux-ohos",
-        "--sysroot",
-        sysroot,
-        "-o",
-        out_bin,
-        f"-O{cfg['opt_level']}",
-        "-std=gnu11",
-        "-w",
-        *extra_cflags,
-        out_c,
-    ]
+    extra_cflags = list(extra_cflags or [])
+    extra_ldflags = list(extra_ldflags or [])
+    cmd = [cc]
+    if target:
+        cmd.extend(["-target", target])
+    if sysroot:
+        cmd.extend(["--sysroot", sysroot])
+    cmd.extend(
+        [
+            "-o",
+            out_bin,
+            f"-O{cfg['opt_level']}",
+            "-std=gnu11",
+            "-w",
+            *extra_cflags,
+            out_c,
+            *extra_ldflags,
+        ]
+    )
     completed = run_cmd(cmd)
     if completed.stdout:
         print(completed.stdout, end="")
@@ -286,7 +291,31 @@ def hdc_send(hdc, src, dst):
     return run_cmd([hdc, "file", "send", src, dst])
 
 
-def run_remote_runner(hdc, remote_workdir, remote_runner, remote_bin, cfg, runner_env=None):
+def format_event_groups(event_groups):
+    return "\n".join(",".join(group) for group in event_groups)
+
+
+def build_runner_env(cfg, runner_workdir, bin_path, runner_env=None, event_groups=None):
+    env_pairs = {
+        "BIN": bin_path,
+        "ITERS": cfg["iters"],
+        "ROUNDS": cfg["rounds"],
+        "CPU_CORE": cfg["cpu_core"],
+    }
+    if runner_workdir:
+        env_pairs["WORKDIR"] = runner_workdir
+    if event_groups:
+        env_pairs["EVENT_GROUPS"] = format_event_groups(event_groups)
+    if runner_env:
+        env_pairs.update({key: str(value) for key, value in runner_env.items()})
+    return {key: str(value) for key, value in env_pairs.items() if value is not None}
+
+
+def shell_env_text(env_pairs):
+    return " ".join(f"{key}={shlex.quote(value)}" for key, value in env_pairs.items())
+
+
+def run_remote_runner(hdc, remote_workdir, remote_runner, remote_bin, cfg, runner_env=None, event_groups=None):
     remote_workdir = remote_workdir.rstrip("/")
     remote_bin_name = Path(remote_bin).name
     remote_runner_name = Path(remote_runner).name
@@ -298,17 +327,9 @@ def run_remote_runner(hdc, remote_workdir, remote_runner, remote_bin, cfg, runne
     hdc_send(hdc, remote_runner, remote_runner_path)
     hdc_shell(hdc, f"chmod +x {remote_bin_path} {remote_runner_path}")
 
-    env_pairs = {
-        "BIN": remote_bin_path,
-        "ITERS": cfg["iters"],
-        "ROUNDS": cfg["rounds"],
-        "CPU_CORE": cfg["cpu_core"],
-    }
-    if runner_env:
-        env_pairs.update({key: str(value) for key, value in runner_env.items()})
-
-    env_text = " ".join(f"{key}={value}" for key, value in env_pairs.items())
-    remote_cmd = f"cd {remote_workdir} && {env_text} sh {remote_runner_path}"
+    env_pairs = build_runner_env(cfg, remote_workdir, remote_bin_path, runner_env, event_groups)
+    env_text = shell_env_text(env_pairs)
+    remote_cmd = f"cd {shlex.quote(remote_workdir)} && {env_text} sh {shlex.quote(remote_runner_path)}"
     completed = hdc_shell(hdc, remote_cmd)
     output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
     failure_hints = [
@@ -328,41 +349,82 @@ def run_remote_runner(hdc, remote_workdir, remote_runner, remote_bin, cfg, runne
     return output
 
 
-def canonicalize_metrics(raw_metrics, canonical_events):
+def run_local_runner(local_workdir, runner_script, local_bin, cfg, runner_env=None, event_groups=None):
+    env = os.environ.copy()
+    env.update(build_runner_env(cfg, local_workdir, local_bin, runner_env, event_groups))
+    completed = run_cmd(["sh", runner_script], cwd=Path(runner_script).resolve().parent, env=env)
+    return (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
+
+
+def run_benchmark_runner(knobs, cfg):
+    runner_kind = knobs["runner_kind"]
+    if runner_kind == "hdc":
+        return run_remote_runner(
+            knobs["hdc"],
+            knobs["runner_workdir"],
+            knobs["runner_sh"],
+            knobs["out_bin"],
+            cfg,
+            knobs.get("runner_env", {}),
+            knobs.get("metric_groups", []),
+        )
+    if runner_kind == "local":
+        return run_local_runner(
+            knobs["runner_workdir"],
+            knobs["runner_sh"],
+            knobs["out_bin"],
+            cfg,
+            knobs.get("runner_env", {}),
+            knobs.get("metric_groups", []),
+        )
+    raise ValueError(f"unknown runner_kind={runner_kind!r}")
+
+
+def canonicalize_metrics(raw_metrics, canonical_events, event_aliases):
     canonical = {event: None for event in canonical_events}
     for raw_key, value in raw_metrics.items():
-        canonical_key = RAW_TO_CANONICAL.get(raw_key)
+        canonical_key = event_aliases.get(raw_key)
         if canonical_key:
             canonical[canonical_key] = value
     return canonical
 
 
-def parse_hiperf_metrics(output, canonical_events):
-    perf_groups = split_perf_groups(output)
+def parse_runner_metrics(
+    output,
+    canonical_events,
+    metric_groups,
+    event_aliases,
+    normalize_to_event=None,
+    group_marker="===== perf group =====",
+    runner_label="runner",
+):
+    perf_groups = split_perf_groups(output, group_marker)
     if not perf_groups:
         raise RuntimeError(
             "No perf groups found in runner output. "
-            "Either run_hiperf.sh did not start correctly or the returned text format changed. "
+            f"Either {runner_label} did not start correctly or the returned text format changed. "
             f"Raw output:\n{output.strip()}"
         )
 
-    if len(perf_groups) < len(RAW_EVENT_GROUPS):
-        raise RuntimeError(f"Expected {len(RAW_EVENT_GROUPS)} perf groups, got {len(perf_groups)}")
+    if len(perf_groups) < len(metric_groups):
+        raise RuntimeError(f"Expected {len(metric_groups)} perf groups, got {len(perf_groups)}")
 
     parsed_groups = []
-    for index, group_text in enumerate(perf_groups[: len(RAW_EVENT_GROUPS)]):
-        parsed_groups.append(parse_perf_stat(group_text, RAW_EVENT_GROUPS[index]))
+    for index, group_text in enumerate(perf_groups[: len(metric_groups)]):
+        parsed_groups.append(parse_perf_stat(group_text, metric_groups[index]))
 
-    ref_instructions = parsed_groups[0].get("raw-instruction-retired:u")
-    if ref_instructions in (None, 0):
-        raise RuntimeError("Failed to get reference instructions from hiperf group 1")
+    normalized_groups = parsed_groups
+    if normalize_to_event:
+        ref_value = parsed_groups[0].get(normalize_to_event)
+        if ref_value in (None, 0):
+            raise RuntimeError(f"Failed to get reference event {normalize_to_event!r} from perf group 1")
 
-    normalized_groups = [parsed_groups[0]]
-    for group_metrics in parsed_groups[1:]:
-        normalized_groups.append(normalize_metrics_to_ref_instructions(group_metrics, ref_instructions))
+        normalized_groups = [parsed_groups[0]]
+        for group_metrics in parsed_groups[1:]:
+            normalized_groups.append(normalize_metrics_to_ref_event(group_metrics, ref_value, normalize_to_event))
 
     merged_raw = merge_metric_dicts(normalized_groups)
-    metrics = canonicalize_metrics(merged_raw, canonical_events)
+    metrics = canonicalize_metrics(merged_raw, canonical_events, event_aliases)
     return metrics
 
 
@@ -371,22 +433,28 @@ def run_one(cfg, knobs):
     generate_c(knobs["out_c"], cfg)
     compile_bin(
         knobs["cc"],
-        knobs["sysroot"],
-        knobs["extra_cflags"],
         knobs["out_c"],
         knobs["out_bin"],
         flat_cfg,
+        target=knobs.get("target"),
+        sysroot=knobs.get("sysroot"),
+        extra_cflags=knobs.get("extra_cflags"),
+        extra_ldflags=knobs.get("extra_ldflags"),
     )
 
-    output = run_remote_runner(
-        knobs["hdc"],
-        knobs["remote_workdir"],
-        knobs["runner_sh"],
-        knobs["out_bin"],
+    output = run_benchmark_runner(
+        knobs,
         flat_cfg,
-        knobs.get("runner_env", {}),
     )
-    metrics = parse_hiperf_metrics(output, knobs["events"])
+    metrics = parse_runner_metrics(
+        output,
+        knobs["events"],
+        knobs["metric_groups"],
+        knobs["metric_aliases"],
+        normalize_to_event=knobs.get("normalize_to_event"),
+        group_marker=knobs.get("group_marker", "===== perf group ====="),
+        runner_label=Path(knobs["runner_sh"]).name,
+    )
     derived = calc_derived(metrics)
 
     row = {}

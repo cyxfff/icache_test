@@ -90,6 +90,163 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hot-l2-region-reps", type=int, default=0, help="Hot L2 replay count per outer iteration")
     parser.add_argument("--hot-l2-pos", type=int, default=7, help="Execution order position of the hot L2 module")
 
+    parser.add_argument("--data-stream-size", type=int, default=0, help="Working-set bytes for the data-stream module")
+    parser.add_argument(
+        "--data-stream-stride",
+        type=int,
+        default=64,
+        help="Stride in bytes between consecutive data-stream loads",
+    )
+    parser.add_argument("--data-stream-region-reps", type=int, default=0, help="Data-stream replay count per outer iteration")
+    parser.add_argument("--data-stream-pos", type=int, default=5, help="Execution order position of the data-stream module")
+
+    parser.add_argument("--data-pointer-chase-pages", type=int, default=0, help="Page count for the data pointer-chase pool")
+    parser.add_argument(
+        "--data-pointer-chase-lines-per-page",
+        type=int,
+        default=1,
+        help="How many 64B lines to thread through on each data pointer-chase page",
+    )
+    parser.add_argument(
+        "--data-pointer-chase-region-reps",
+        type=int,
+        default=0,
+        help="Data pointer-chase replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--data-pointer-chase-pos",
+        type=int,
+        default=6,
+        help="Execution order position of the data pointer-chase module",
+    )
+
+    parser.add_argument("--data-page-stride-pages", type=int, default=0, help="Page count for the cross-page stride module")
+    parser.add_argument(
+        "--data-page-stride-page-stride",
+        type=int,
+        default=1,
+        help="Stride in pages between successive cross-page loads",
+    )
+    parser.add_argument(
+        "--data-page-stride-line-index",
+        type=int,
+        default=0,
+        help="Which 64B line inside each page to touch in the cross-page stride module",
+    )
+    parser.add_argument(
+        "--data-page-stride-region-reps",
+        type=int,
+        default=0,
+        help="Cross-page stride replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--data-page-stride-pos",
+        type=int,
+        default=7,
+        help="Execution order position of the cross-page stride module",
+    )
+
+    parser.add_argument("--data-indirect-gather-pages", type=int, default=0, help="Page count for the indirect-gather pool")
+    parser.add_argument(
+        "--data-indirect-gather-lines-per-page",
+        type=int,
+        default=1,
+        help="How many 64B lines to sample on each page in the indirect-gather pool",
+    )
+    parser.add_argument(
+        "--data-indirect-gather-index-stride",
+        type=int,
+        default=1,
+        help="Stride through the indirect index array for the indirect-gather module",
+    )
+    parser.add_argument(
+        "--data-indirect-gather-region-reps",
+        type=int,
+        default=0,
+        help="Indirect-gather replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--data-indirect-gather-pos",
+        type=int,
+        default=8,
+        help="Execution order position of the indirect-gather module",
+    )
+
+    parser.add_argument(
+        "--data-hot-stride-access-count",
+        type=int,
+        default=0,
+        help="How many fixed-stride accesses to issue before the hot-stride module wraps to the start",
+    )
+    parser.add_argument(
+        "--data-hot-stride-stride",
+        type=int,
+        default=4,
+        help="Byte stride for the hot-stride module",
+    )
+    parser.add_argument(
+        "--data-hot-stride-region-reps",
+        type=int,
+        default=0,
+        help="Hot-stride replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--data-hot-stride-pos",
+        type=int,
+        default=9,
+        help="Execution order position of the hot-stride module",
+    )
+
+    parser.add_argument(
+        "--data-cold-stride-access-count",
+        type=int,
+        default=0,
+        help="How many fixed-stride accesses to issue before the cold-stride module wraps to the start",
+    )
+    parser.add_argument(
+        "--data-cold-stride-stride",
+        type=int,
+        default=256,
+        help="Byte stride for the cold-stride module",
+    )
+    parser.add_argument(
+        "--data-cold-stride-region-reps",
+        type=int,
+        default=0,
+        help="Cold-stride replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--data-cold-stride-pos",
+        type=int,
+        default=10,
+        help="Execution order position of the cold-stride module",
+    )
+
+    parser.add_argument(
+        "--data-tlb-indirect-pages",
+        type=int,
+        default=0,
+        help="How many pages to thread through in the TLB-indirect module",
+    )
+    parser.add_argument(
+        "--data-tlb-indirect-line-index",
+        type=int,
+        default=0,
+        help="Which 64B line inside each page to touch in the TLB-indirect module",
+    )
+    parser.add_argument(
+        "--data-tlb-indirect-region-reps",
+        type=int,
+        default=0,
+        help="TLB-indirect replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--data-tlb-indirect-pos",
+        type=int,
+        default=11,
+        help="Execution order position of the TLB-indirect module",
+    )
+
     parser.add_argument("--itlb-funcs", type=int, default=0, help="Number of 4KB-aligned code pages in the ITLB pool")
     parser.add_argument(
         "--itlb-lines-per-page",
@@ -214,6 +371,48 @@ def generate(args: argparse.Namespace) -> str:
     hot_l2_size = max(0, args.hot_l2_size)
     hot_l2_region_reps = 0 if hot_l2_size == 0 else max(1, args.hot_l2_region_reps)
     hot_l2_pos = args.hot_l2_pos
+    data_stream_size = MODULES.data_stream.normalize_size_bytes(args.data_stream_size)
+    data_stream_stride = MODULES.data_stream.normalize_stride_bytes(data_stream_size, args.data_stream_stride)
+    data_stream_region_reps = 0 if data_stream_size == 0 else max(1, args.data_stream_region_reps)
+    data_stream_pos = args.data_stream_pos
+    data_pointer_chase_pages = MODULES.data_pointer_chase.normalize_page_count(args.data_pointer_chase_pages)
+    data_pointer_chase_lines_per_page = MODULES.data_pointer_chase.normalize_lines_per_page(
+        args.data_pointer_chase_lines_per_page
+    )
+    data_pointer_chase_region_reps = 0 if data_pointer_chase_pages == 0 else max(1, args.data_pointer_chase_region_reps)
+    data_pointer_chase_pos = args.data_pointer_chase_pos
+    data_page_stride_pages = MODULES.data_page_stride.normalize_page_count(args.data_page_stride_pages)
+    data_page_stride_line_index = MODULES.data_page_stride.normalize_line_index(args.data_page_stride_line_index)
+    data_page_stride_page_stride = MODULES.data_page_stride.normalize_cycle_stride(
+        data_page_stride_pages,
+        args.data_page_stride_page_stride,
+    )
+    data_page_stride_region_reps = 0 if data_page_stride_pages == 0 else max(1, args.data_page_stride_region_reps)
+    data_page_stride_pos = args.data_page_stride_pos
+    data_indirect_gather_pages = MODULES.data_indirect_gather.normalize_page_count(args.data_indirect_gather_pages)
+    data_indirect_gather_lines_per_page = MODULES.data_indirect_gather.normalize_lines_per_page(
+        args.data_indirect_gather_lines_per_page
+    )
+    data_indirect_gather_region_reps = (
+        0 if data_indirect_gather_pages == 0 else max(1, args.data_indirect_gather_region_reps)
+    )
+    data_indirect_gather_pos = args.data_indirect_gather_pos
+    data_hot_stride_access_count = MODULES.data_hot_stride.normalize_access_count(args.data_hot_stride_access_count)
+    data_hot_stride_stride = MODULES.data_hot_stride.normalize_word_stride_bytes(args.data_hot_stride_stride)
+    data_hot_stride_region_reps = 0 if data_hot_stride_access_count == 0 else max(1, args.data_hot_stride_region_reps)
+    data_hot_stride_pos = args.data_hot_stride_pos
+    data_cold_stride_access_count = MODULES.data_cold_stride.normalize_access_count(args.data_cold_stride_access_count)
+    data_cold_stride_stride = MODULES.data_cold_stride.normalize_word_stride_bytes(args.data_cold_stride_stride)
+    data_cold_stride_region_reps = (
+        0 if data_cold_stride_access_count == 0 else max(1, args.data_cold_stride_region_reps)
+    )
+    data_cold_stride_pos = args.data_cold_stride_pos
+    data_tlb_indirect_pages = MODULES.data_tlb_indirect.normalize_page_count(args.data_tlb_indirect_pages)
+    data_tlb_indirect_line_index = MODULES.data_tlb_indirect.normalize_line_index(args.data_tlb_indirect_line_index)
+    data_tlb_indirect_region_reps = (
+        0 if data_tlb_indirect_pages == 0 else max(1, args.data_tlb_indirect_region_reps)
+    )
+    data_tlb_indirect_pos = args.data_tlb_indirect_pos
 
     fetch_total_blocks = max(0, args.fetch_blocks)
     fetch_region_reps = 0 if fetch_total_blocks == 0 else max(1, args.fetch_region_reps)
@@ -247,12 +446,19 @@ def generate(args: argparse.Namespace) -> str:
         and fetch_total_blocks == 0
         and hot_l1_size == 0
         and hot_l2_size == 0
+        and data_stream_size == 0
+        and data_pointer_chase_pages == 0
+        and data_page_stride_pages == 0
+        and data_indirect_gather_pages == 0
+        and data_hot_stride_access_count == 0
+        and data_cold_stride_access_count == 0
+        and data_tlb_indirect_pages == 0
         and itlb_funcs == 0
         and call_ret_funcs == 0
         and plt_stub_funcs == 0
         and indirect_target_count == 0
     ):
-        raise ValueError("At least one frontend module must be non-zero")
+        raise ValueError("At least one frontend or data-cache module must be non-zero")
 
     main_block_align = max(64, args.block_align)
     fetch_block_align = max(64, args.fetch_block_align)
@@ -287,6 +493,44 @@ def generate(args: argparse.Namespace) -> str:
     itlb_phys_order = MODULES.tlb_region.shuffled_itlb_phys_order(itlb_funcs, args.seed ^ 0x9E3779B1)
     itlb_exec_order = MODULES.tlb_region.constrained_itlb_exec_order(itlb_phys_order, args.seed ^ 0x85EBCA77, 4)
     itlb_next_map, itlb_chain_pos_map = MODULES.tlb_region.build_chain_maps(itlb_funcs, itlb_exec_order, itlb_mode)
+    data_pointer_chase_offsets = MODULES.data_pointer_chase.build_pointer_chase_offsets(
+        data_pointer_chase_pages,
+        data_pointer_chase_lines_per_page,
+        args.seed ^ 0x4CF5AD43,
+    )
+    data_page_stride_offsets = MODULES.data_page_stride.build_page_stride_offsets(
+        data_page_stride_pages,
+        data_page_stride_page_stride,
+        data_page_stride_line_index,
+        args.seed ^ 0x7F4A7C15,
+    )
+    data_indirect_gather_offsets = MODULES.data_indirect_gather.build_pointer_chase_offsets(
+        data_indirect_gather_pages,
+        data_indirect_gather_lines_per_page,
+        args.seed ^ 0xA24BAED4,
+    )
+    data_indirect_gather_node_count = len(data_indirect_gather_offsets)
+    data_indirect_gather_index_stride = MODULES.data_indirect_gather.normalize_cycle_stride(
+        data_indirect_gather_node_count,
+        args.data_indirect_gather_index_stride,
+    )
+    data_hot_stride_offsets = MODULES.data_hot_stride.build_stride_offsets(
+        data_hot_stride_access_count,
+        data_hot_stride_stride,
+    )
+    data_hot_stride_buffer_bytes = 0 if not data_hot_stride_offsets else data_hot_stride_offsets[-1] + 4
+    data_cold_stride_offsets = MODULES.data_cold_stride.build_stride_offsets(
+        data_cold_stride_access_count,
+        data_cold_stride_stride,
+    )
+    data_cold_stride_buffer_bytes = 0 if not data_cold_stride_offsets else data_cold_stride_offsets[-1] + 4
+    data_tlb_indirect_offsets = MODULES.data_tlb_indirect.build_tlb_indirect_offsets(
+        data_tlb_indirect_pages,
+        data_tlb_indirect_line_index,
+        args.seed ^ 0xC2B2AE35,
+    )
+    data_tlb_indirect_access_count = len(data_tlb_indirect_offsets)
+    data_tlb_indirect_pool_bytes = data_tlb_indirect_pages * 4096
 
     call_ret_phys_order = MODULES.tlb_region.shuffled_itlb_phys_order(call_ret_funcs, args.seed ^ 0x165667B1)
     call_ret_exec_order = MODULES.tlb_region.constrained_itlb_exec_order(
@@ -314,6 +558,16 @@ def generate(args: argparse.Namespace) -> str:
 
     hot_l1_entries_per_iter = hot_l1_region_reps
     hot_l2_entries_per_iter = hot_l2_region_reps
+    data_stream_accesses_per_call = 0 if data_stream_size == 0 else ((data_stream_size - 1) // data_stream_stride) + 1
+    data_stream_accesses_per_iter = data_stream_accesses_per_call * data_stream_region_reps
+    data_pointer_chase_nodes = len(data_pointer_chase_offsets)
+    data_pointer_chase_accesses_per_iter = data_pointer_chase_nodes * data_pointer_chase_region_reps
+    data_page_stride_accesses_per_call = len(data_page_stride_offsets)
+    data_page_stride_accesses_per_iter = data_page_stride_accesses_per_call * data_page_stride_region_reps
+    data_indirect_gather_accesses_per_iter = data_indirect_gather_node_count * data_indirect_gather_region_reps
+    data_hot_stride_accesses_per_iter = data_hot_stride_access_count * data_hot_stride_region_reps
+    data_cold_stride_accesses_per_iter = data_cold_stride_access_count * data_cold_stride_region_reps
+    data_tlb_indirect_accesses_per_iter = data_tlb_indirect_access_count * data_tlb_indirect_region_reps
     itlb_calls_per_iter = itlb_region_reps if itlb_mode == "chain" else itlb_funcs * itlb_region_reps
     call_ret_calls_per_iter = call_ret_region_reps
     plt_stub_calls_per_iter = plt_stub_funcs * plt_stub_region_reps
@@ -324,6 +578,13 @@ def generate(args: argparse.Namespace) -> str:
     total_frontend_units_per_iter = (
         hot_l1_entries_per_iter
         + hot_l2_entries_per_iter
+        + data_stream_accesses_per_iter
+        + data_pointer_chase_accesses_per_iter
+        + data_page_stride_accesses_per_iter
+        + data_indirect_gather_accesses_per_iter
+        + data_hot_stride_accesses_per_iter
+        + data_cold_stride_accesses_per_iter
+        + data_tlb_indirect_accesses_per_iter
         + fetch_block_entries_per_iter
         + itlb_calls_per_iter
         + call_ret_calls_per_iter
@@ -333,8 +594,57 @@ def generate(args: argparse.Namespace) -> str:
     )
 
     ordered_module_loops = [
-        (hot_l1_pos, "hot_l1", "CONFIG_HOT_L1_REGION_REPS", "CONFIG_HOT_L1_SIZE > 0", "hot_l1_blob();"),
-        (hot_l2_pos, "hot_l2", "CONFIG_HOT_L2_REGION_REPS", "CONFIG_HOT_L2_SIZE > 0", "hot_l2_blob();"),
+        (hot_l1_pos, "hot_l1", "CONFIG_HOT_L1_REGION_REPS", "CONFIG_HOT_L1_SIZE > 0", "run_hot_l1_once();"),
+        (hot_l2_pos, "hot_l2", "CONFIG_HOT_L2_REGION_REPS", "CONFIG_HOT_L2_SIZE > 0", "run_hot_l2_once();"),
+        (
+            data_stream_pos,
+            "data_stream",
+            "CONFIG_DATA_STREAM_REGION_REPS",
+            "CONFIG_DATA_STREAM_SIZE > 0",
+            "run_data_stream_once();",
+        ),
+        (
+            data_pointer_chase_pos,
+            "data_pointer_chase",
+            "CONFIG_DATA_POINTER_CHASE_REGION_REPS",
+            "CONFIG_DATA_POINTER_CHASE_PAGE_COUNT > 0",
+            "run_data_pointer_chase_once();",
+        ),
+        (
+            data_page_stride_pos,
+            "data_page_stride",
+            "CONFIG_DATA_PAGE_STRIDE_REGION_REPS",
+            "CONFIG_DATA_PAGE_STRIDE_PAGE_COUNT > 0",
+            "run_data_page_stride_once();",
+        ),
+        (
+            data_indirect_gather_pos,
+            "data_indirect_gather",
+            "CONFIG_DATA_INDIRECT_GATHER_REGION_REPS",
+            "CONFIG_DATA_INDIRECT_GATHER_PAGE_COUNT > 0",
+            "run_data_indirect_gather_once();",
+        ),
+        (
+            data_hot_stride_pos,
+            "data_hot_stride",
+            "CONFIG_DATA_HOT_STRIDE_REGION_REPS",
+            "CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT > 0",
+            "run_data_hot_stride_once();",
+        ),
+        (
+            data_cold_stride_pos,
+            "data_cold_stride",
+            "CONFIG_DATA_COLD_STRIDE_REGION_REPS",
+            "CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT > 0",
+            "run_data_cold_stride_once();",
+        ),
+        (
+            data_tlb_indirect_pos,
+            "data_tlb_indirect",
+            "CONFIG_DATA_TLB_INDIRECT_REGION_REPS",
+            "CONFIG_DATA_TLB_INDIRECT_PAGE_COUNT > 0",
+            "run_data_tlb_indirect_once();",
+        ),
         (
             fetch_pos,
             "fetch_amplifier",
@@ -398,6 +708,53 @@ def generate(args: argparse.Namespace) -> str:
     out.append(f"#define CONFIG_HOT_L2_POS {hot_l2_pos}u\n")
     out.append(f"#define CONFIG_HOT_L2_ALIGN {hot_l2_align}u\n")
 
+    out.append(f"#define CONFIG_DATA_STREAM_SIZE {data_stream_size}u\n")
+    out.append(f"#define CONFIG_DATA_STREAM_STRIDE {data_stream_stride}u\n")
+    out.append(f"#define CONFIG_DATA_STREAM_REGION_REPS {data_stream_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_STREAM_POS {data_stream_pos}u\n")
+
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_PAGE_COUNT {data_pointer_chase_pages}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_LINES_PER_PAGE {data_pointer_chase_lines_per_page}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_NODE_COUNT {len(data_pointer_chase_offsets)}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_POOL_BYTES {data_pointer_chase_pages * 4096}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_REGION_REPS {data_pointer_chase_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_POS {data_pointer_chase_pos}u\n")
+
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_PAGE_COUNT {data_page_stride_pages}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_PAGE_STRIDE {data_page_stride_page_stride}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_LINE_INDEX {data_page_stride_line_index}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_OFFSET_COUNT {len(data_page_stride_offsets)}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_POOL_BYTES {data_page_stride_pages * 4096}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_REGION_REPS {data_page_stride_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_POS {data_page_stride_pos}u\n")
+
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_PAGE_COUNT {data_indirect_gather_pages}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_LINES_PER_PAGE {data_indirect_gather_lines_per_page}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT {data_indirect_gather_node_count}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES {data_indirect_gather_pages * 4096}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_INDEX_STRIDE {data_indirect_gather_index_stride}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_REGION_REPS {data_indirect_gather_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_POS {data_indirect_gather_pos}u\n")
+
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT {data_hot_stride_access_count}u\n")
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_STRIDE {data_hot_stride_stride}u\n")
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES {data_hot_stride_buffer_bytes}u\n")
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_REGION_REPS {data_hot_stride_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_POS {data_hot_stride_pos}u\n")
+
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT {data_cold_stride_access_count}u\n")
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_STRIDE {data_cold_stride_stride}u\n")
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES {data_cold_stride_buffer_bytes}u\n")
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_REGION_REPS {data_cold_stride_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_POS {data_cold_stride_pos}u\n")
+
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_PAGE_COUNT {data_tlb_indirect_pages}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_LINE_INDEX {data_tlb_indirect_line_index}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_ACCESS_COUNT {data_tlb_indirect_access_count}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_POOL_BYTES {data_tlb_indirect_pool_bytes}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_REGION_REPS {data_tlb_indirect_region_reps}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_POS {data_tlb_indirect_pos}u\n")
+
     out.append(f"#define CONFIG_FETCH_TOTAL_BLOCKS {fetch_total_blocks}u\n")
     out.append(f"#define CONFIG_FETCH_BLOCK_ALIGN {fetch_block_align}u\n")
     out.append(f"#define CONFIG_FETCH_DIRECT_RUN_LEN {fetch_direct_run_len}u\n")
@@ -439,6 +796,20 @@ def generate(args: argparse.Namespace) -> str:
 
     out.append(f"#define CONFIG_HOT_L1_ENTRIES_PER_ITER {hot_l1_entries_per_iter}u\n")
     out.append(f"#define CONFIG_HOT_L2_ENTRIES_PER_ITER {hot_l2_entries_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_STREAM_ACCESSES_PER_CALL {data_stream_accesses_per_call}u\n")
+    out.append(f"#define CONFIG_DATA_STREAM_ACCESSES_PER_ITER {data_stream_accesses_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_NODES {data_pointer_chase_nodes}u\n")
+    out.append(f"#define CONFIG_DATA_POINTER_CHASE_ACCESSES_PER_ITER {data_pointer_chase_accesses_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_ACCESSES_PER_CALL {data_page_stride_accesses_per_call}u\n")
+    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_ACCESSES_PER_ITER {data_page_stride_accesses_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_NODES {data_indirect_gather_node_count}u\n")
+    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_ACCESSES_PER_ITER {data_indirect_gather_accesses_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_ACCESSES_PER_CALL {data_hot_stride_access_count}u\n")
+    out.append(f"#define CONFIG_DATA_HOT_STRIDE_ACCESSES_PER_ITER {data_hot_stride_accesses_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_ACCESSES_PER_CALL {data_cold_stride_access_count}u\n")
+    out.append(f"#define CONFIG_DATA_COLD_STRIDE_ACCESSES_PER_ITER {data_cold_stride_accesses_per_iter}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_ACCESSES_PER_CALL {data_tlb_indirect_access_count}u\n")
+    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_ACCESSES_PER_ITER {data_tlb_indirect_accesses_per_iter}u\n")
     out.append(f"#define CONFIG_FETCH_BLOCK_ENTRIES_PER_ITER {fetch_block_entries_per_iter}u\n")
     out.append(f"#define CONFIG_ITLB_CALLS_PER_ITER {itlb_calls_per_iter}u\n")
     out.append(f"#define CONFIG_CALL_RET_CALLS_PER_ITER {call_ret_calls_per_iter}u\n")
@@ -461,6 +832,49 @@ def generate(args: argparse.Namespace) -> str:
     out.append(format_u32_array("kCallRetPhysicalOrder", call_ret_phys_order))
     out.append(format_u32_array("kCallRetExecOrder", call_ret_exec_order))
     out.append(format_u32_array("kCallRetSamples", call_ret_samples))
+    out.append(format_u32_array("kDataPointerChaseOffsets", data_pointer_chase_offsets))
+    out.append(format_u32_array("kDataPageStrideOffsets", data_page_stride_offsets))
+    out.append(format_u32_array("kDataIndirectGatherOffsets", data_indirect_gather_offsets))
+    out.append(format_u32_array("kDataHotStrideOffsets", data_hot_stride_offsets))
+    out.append(format_u32_array("kDataColdStrideOffsets", data_cold_stride_offsets))
+    out.append(format_u32_array("kDataTlbIndirectOffsets", data_tlb_indirect_offsets))
+
+    out.append(MODULES.data_stream.emit_stream_storage("data_stream", "CONFIG_DATA_STREAM_SIZE"))
+    out.append(
+        MODULES.data_pointer_chase.emit_pointer_chase_storage(
+            "data_pointer_chase",
+            "CONFIG_DATA_POINTER_CHASE_POOL_BYTES",
+        )
+    )
+    out.append(
+        MODULES.data_page_stride.emit_stream_storage(
+            "data_page_stride",
+            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
+            align=4096,
+        )
+    )
+    out.append(
+        MODULES.data_indirect_gather.emit_indirect_gather_storage(
+            "data_indirect_gather",
+            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
+            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
+        )
+    )
+    out.append(MODULES.data_hot_stride.emit_stream_storage("data_hot_stride", "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES"))
+    out.append(
+        MODULES.data_cold_stride.emit_stream_storage(
+            "data_cold_stride",
+            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
+            align=4096,
+        )
+    )
+    out.append(
+        MODULES.data_tlb_indirect.emit_stream_storage(
+            "data_tlb_indirect",
+            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
+            align=4096,
+        )
+    )
 
     out.append("typedef void (*bench_func_t)(void);\n\n")
     out.append("static void *g_itlb_func_table[CONFIG_ITLB_FUNCS > 0 ? CONFIG_ITLB_FUNCS : 1u];\n")
@@ -509,6 +923,106 @@ def generate(args: argparse.Namespace) -> str:
         )
     )
     out.append(MODULES.hot_region.emit_region_function("hot_l2_blob", hot_l2_size, hot_l2_align))
+    out.append(
+        MODULES.data_stream.emit_stream_init_function(
+            "data_stream",
+            "CONFIG_DATA_STREAM_SIZE",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_stream.emit_stream_function(
+            "data_stream",
+            "CONFIG_DATA_STREAM_SIZE",
+            "CONFIG_DATA_STREAM_STRIDE",
+        )
+    )
+    out.append(
+        MODULES.data_pointer_chase.emit_pointer_chase_init_function(
+            "data_pointer_chase",
+            "kDataPointerChaseOffsets",
+            "CONFIG_DATA_POINTER_CHASE_NODE_COUNT",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_pointer_chase.emit_pointer_chase_function(
+            "data_pointer_chase",
+            "CONFIG_DATA_POINTER_CHASE_NODE_COUNT",
+        )
+    )
+    out.append(
+        MODULES.data_page_stride.emit_stream_init_function(
+            "data_page_stride",
+            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_page_stride.emit_offset_gather_function(
+            "data_page_stride",
+            "kDataPageStrideOffsets",
+            "CONFIG_DATA_PAGE_STRIDE_OFFSET_COUNT",
+        )
+    )
+    out.append(
+        MODULES.data_indirect_gather.emit_indirect_gather_init_function(
+            "data_indirect_gather",
+            "kDataIndirectGatherOffsets",
+            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
+            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
+            "CONFIG_DATA_INDIRECT_GATHER_INDEX_STRIDE",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_indirect_gather.emit_indirect_gather_function(
+            "data_indirect_gather",
+            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
+        )
+    )
+    out.append(
+        MODULES.data_hot_stride.emit_stream_init_function(
+            "data_hot_stride",
+            "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_hot_stride.emit_offset_cycle_function(
+            "data_hot_stride",
+            "kDataHotStrideOffsets",
+            "CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT",
+        )
+    )
+    out.append(
+        MODULES.data_cold_stride.emit_stream_init_function(
+            "data_cold_stride",
+            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_cold_stride.emit_offset_cycle_function(
+            "data_cold_stride",
+            "kDataColdStrideOffsets",
+            "CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT",
+        )
+    )
+    out.append(
+        MODULES.data_tlb_indirect.emit_stream_init_function(
+            "data_tlb_indirect",
+            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
+            "CONFIG_SEED",
+        )
+    )
+    out.append(
+        MODULES.data_tlb_indirect.emit_offset_cycle_function(
+            "data_tlb_indirect",
+            "kDataTlbIndirectOffsets",
+            "CONFIG_DATA_TLB_INDIRECT_ACCESS_COUNT",
+        )
+    )
 
     for logical_id in fetch_physical_order:
         out.append(
@@ -564,9 +1078,63 @@ def generate(args: argparse.Namespace) -> str:
         )
 
     out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_hot_l1_once(void) {\n")
+    if hot_l1_size > 0:
+        out.append("    hot_l1_blob();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_hot_l2_once(void) {\n")
+    if hot_l2_size > 0:
+        out.append("    hot_l2_blob();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
     out.append("static void run_fetch_amplifier_once(void) {\n")
     if fetch_total_blocks > 0:
         out.append("    ((bench_func_t)g_fetch_table[0])();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_stream_once(void) {\n")
+    if data_stream_size > 0:
+        out.append("    data_stream_kernel();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_pointer_chase_once(void) {\n")
+    if data_pointer_chase_pages > 0:
+        out.append("    data_pointer_chase_kernel();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_page_stride_once(void) {\n")
+    if data_page_stride_pages > 0:
+        out.append("    data_page_stride_kernel();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_indirect_gather_once(void) {\n")
+    if data_indirect_gather_pages > 0:
+        out.append("    data_indirect_gather_kernel();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_hot_stride_once(void) {\n")
+    if data_hot_stride_access_count > 0:
+        out.append("    data_hot_stride_kernel();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_cold_stride_once(void) {\n")
+    if data_cold_stride_access_count > 0:
+        out.append("    data_cold_stride_kernel();\n")
+    out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_data_tlb_indirect_once(void) {\n")
+    if data_tlb_indirect_pages > 0:
+        out.append("    data_tlb_indirect_kernel();\n")
     out.append("}\n\n")
 
     out.append("__attribute__((used, noinline))\n")
@@ -692,6 +1260,31 @@ def generate(args: argparse.Namespace) -> str:
         out.append("    g_indirect_target_table[0] = NULL;\n")
     out.append("\n")
 
+    if data_stream_size > 0:
+        out.append("    init_data_stream_buffer();\n")
+    if data_pointer_chase_pages > 0:
+        out.append("    init_data_pointer_chase_pool();\n")
+    if data_page_stride_pages > 0:
+        out.append("    init_data_page_stride_buffer();\n")
+    if data_indirect_gather_pages > 0:
+        out.append("    init_data_indirect_gather_pool();\n")
+    if data_hot_stride_access_count > 0:
+        out.append("    init_data_hot_stride_buffer();\n")
+    if data_cold_stride_access_count > 0:
+        out.append("    init_data_cold_stride_buffer();\n")
+    if data_tlb_indirect_pages > 0:
+        out.append("    init_data_tlb_indirect_buffer();\n")
+    if (
+        data_stream_size > 0
+        or data_pointer_chase_pages > 0
+        or data_page_stride_pages > 0
+        or data_indirect_gather_pages > 0
+        or data_hot_stride_access_count > 0
+        or data_cold_stride_access_count > 0
+        or data_tlb_indirect_pages > 0
+    ):
+        out.append("\n")
+
     out.append("    fflush(stdout);\n")
     out.append('    puts("PROXYBENCH_READY");\n')
     out.append("    fflush(stdout);\n")
@@ -745,6 +1338,36 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         hot_l2_size=0,
         hot_l2_region_reps=0,
         hot_l2_pos=max(int(cfg["hot_region_loop_pos"]) + 1, 7),
+        data_stream_size=int(cfg.get("data_stream_size", 0)),
+        data_stream_stride=int(cfg.get("data_stream_stride", 64)),
+        data_stream_region_reps=int(cfg.get("data_stream_region_reps", 0)),
+        data_stream_pos=int(cfg.get("data_stream_pos", 5)),
+        data_pointer_chase_pages=int(cfg.get("data_pointer_chase_pages", 0)),
+        data_pointer_chase_lines_per_page=int(cfg.get("data_pointer_chase_lines_per_page", 1)),
+        data_pointer_chase_region_reps=int(cfg.get("data_pointer_chase_region_reps", 0)),
+        data_pointer_chase_pos=int(cfg.get("data_pointer_chase_pos", 6)),
+        data_page_stride_pages=int(cfg.get("data_page_stride_pages", 0)),
+        data_page_stride_page_stride=int(cfg.get("data_page_stride_page_stride", 1)),
+        data_page_stride_line_index=int(cfg.get("data_page_stride_line_index", 0)),
+        data_page_stride_region_reps=int(cfg.get("data_page_stride_region_reps", 0)),
+        data_page_stride_pos=int(cfg.get("data_page_stride_pos", 7)),
+        data_indirect_gather_pages=int(cfg.get("data_indirect_gather_pages", 0)),
+        data_indirect_gather_lines_per_page=int(cfg.get("data_indirect_gather_lines_per_page", 1)),
+        data_indirect_gather_index_stride=int(cfg.get("data_indirect_gather_index_stride", 1)),
+        data_indirect_gather_region_reps=int(cfg.get("data_indirect_gather_region_reps", 0)),
+        data_indirect_gather_pos=int(cfg.get("data_indirect_gather_pos", 8)),
+        data_hot_stride_access_count=int(cfg.get("data_hot_stride_access_count", 0)),
+        data_hot_stride_stride=int(cfg.get("data_hot_stride_stride", 4)),
+        data_hot_stride_region_reps=int(cfg.get("data_hot_stride_region_reps", 0)),
+        data_hot_stride_pos=int(cfg.get("data_hot_stride_pos", 9)),
+        data_cold_stride_access_count=int(cfg.get("data_cold_stride_access_count", 0)),
+        data_cold_stride_stride=int(cfg.get("data_cold_stride_stride", 256)),
+        data_cold_stride_region_reps=int(cfg.get("data_cold_stride_region_reps", 0)),
+        data_cold_stride_pos=int(cfg.get("data_cold_stride_pos", 10)),
+        data_tlb_indirect_pages=int(cfg.get("data_tlb_indirect_pages", 0)),
+        data_tlb_indirect_line_index=int(cfg.get("data_tlb_indirect_line_index", 0)),
+        data_tlb_indirect_region_reps=int(cfg.get("data_tlb_indirect_region_reps", 0)),
+        data_tlb_indirect_pos=int(cfg.get("data_tlb_indirect_pos", 11)),
         itlb_funcs=int(cfg["itlb_funcs"]),
         itlb_lines_per_page=int(cfg["itlb_lines_per_page"]),
         itlb_region_reps=int(cfg["itlb_region_reps"]),
