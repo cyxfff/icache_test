@@ -18,6 +18,7 @@ FIT_CONFIG = {
         "data_tlb_indirect.csv",
         "fetch_amplifier.csv",
         "hot_region_loop.csv",
+        "mixed_region_loop.csv",
         "itlb.csv",
     ],
     "outer_iters": 1000,

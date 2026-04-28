@@ -7,9 +7,9 @@ if __package__ in (None, "", "test"):
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
-    from config import build_base_cfg, build_knobs, METRIC_KEYS
+    from config import MIXED_REGION_SLOT_COUNT, build_base_cfg, build_knobs, METRIC_KEYS
 else:
-    from ..config import build_base_cfg, build_knobs, METRIC_KEYS
+    from ..config import MIXED_REGION_SLOT_COUNT, build_base_cfg, build_knobs, METRIC_KEYS
 
 
 def make_case(label, module, **params):
@@ -18,6 +18,17 @@ def make_case(label, module, **params):
         "module": module,
         "params": params,
     }
+
+
+def alias_cases(cases, module_name, label_prefix):
+    return [
+        {
+            "label": f"{label_prefix}_{case['label']}",
+            "module": module_name,
+            "params": dict(case["params"]),
+        }
+        for case in cases
+    ]
 
 
 COLD_BLOCK_SEQUENCE_BLOCKS = list(range(1000, 20001, 1000))
@@ -32,6 +43,18 @@ HOT_REGION_LOOP_SIZES = [4096, 8192]
 # HOT_REGION_LOOP_REPS = [128, 256, 512, 1024, 2048, 4096, 8192]
 HOT_REGION_LOOP_REPS = [1000]
 HOT_REGION_LOOP_BRANCH_PAIRS = [0, 1, 2, 3, 4]
+
+MIXED_REGION_LOOP_SIZES = [4096, 8192]
+MIXED_REGION_LOOP_LDR_COUNTS = [1, 2, 4, 7, 14]
+MIXED_REGION_LOOP_MODES = [
+    ("linear", "lin"),
+    ("page_shuffle", "pshuf"),
+    ("cross_page", "xpage"),
+    ("indirect", "indir"),
+]
+MIXED_REGION_LOOP_PAGES = [1, 128, 512]
+MIXED_REGION_LOOP_LINES_PER_PAGE = [1, 4]
+MIXED_REGION_LOOP_REGION_REPS = [1000]
 
 DATA_STREAM_SIZES = [8 * 1024, 64 * 1024, 512 * 1024, 4 * 1024 * 1024]
 DATA_STREAM_STRIDES = [64, 256, 4096]
@@ -107,6 +130,24 @@ MODULE_CASE_GROUPS = {
         for size in HOT_REGION_LOOP_SIZES
         for branch_pairs_per_unit in HOT_REGION_LOOP_BRANCH_PAIRS
         for region_reps in HOT_REGION_LOOP_REPS
+    ],
+    "mixed_region_loop": [
+        make_case(
+            f"mix_s{size}_l{ldr_count}_m{mode_tag}_p{pages}_lp{lines_per_page}_r{region_reps}",
+            "mixed_region_loop",
+            size=size,
+            ldr_count_per_unit=ldr_count,
+            data_mode=mode_name,
+            pages=pages,
+            lines_per_page=lines_per_page,
+            region_reps=region_reps,
+        )
+        for size in MIXED_REGION_LOOP_SIZES
+        for ldr_count in MIXED_REGION_LOOP_LDR_COUNTS
+        for mode_name, mode_tag in MIXED_REGION_LOOP_MODES
+        for pages in MIXED_REGION_LOOP_PAGES
+        for lines_per_page in MIXED_REGION_LOOP_LINES_PER_PAGE
+        for region_reps in MIXED_REGION_LOOP_REGION_REPS
     ],
     "data_stream": [
         make_case(
@@ -230,6 +271,13 @@ MODULE_CASE_GROUPS = {
 }
 
 
+INSTRUCTION_MODULE_CASE_GROUPS = {
+    "cold_block_sequence": MODULE_CASE_GROUPS["cold_block_sequence"],
+    "hot_region_loop": MODULE_CASE_GROUPS["hot_region_loop"],
+    "fetch_amplifier": MODULE_CASE_GROUPS["fetch_amplifier"],
+    "itlb": MODULE_CASE_GROUPS["itlb"],
+}
+
 # 主线 data 模块：和 icache 侧一样，强调 hot / cold / tlb 三类行为。
 ACTIVE_DATA_MODULE_CASE_GROUPS = {
     "data_hot_stride": MODULE_CASE_GROUPS["data_hot_stride"],
@@ -245,14 +293,23 @@ LEGACY_DATA_MODULE_CASE_GROUPS = {
     "data_indirect_gather": MODULE_CASE_GROUPS["data_indirect_gather"],
 }
 
+MERGE_MODULE_CASE_GROUPS = {
+    "mixed_region_loop": MODULE_CASE_GROUPS["mixed_region_loop"],
+}
+
 ACTIVE_MODULE_CASE_GROUPS = {
-    "cold_block_sequence": MODULE_CASE_GROUPS["cold_block_sequence"],
-    "hot_region_loop": MODULE_CASE_GROUPS["hot_region_loop"],
-    "data_hot_stride": MODULE_CASE_GROUPS["data_hot_stride"],
-    "data_cold_stride": MODULE_CASE_GROUPS["data_cold_stride"],
-    "data_tlb_indirect": MODULE_CASE_GROUPS["data_tlb_indirect"],
-    "fetch_amplifier": MODULE_CASE_GROUPS["fetch_amplifier"],
-    "itlb": MODULE_CASE_GROUPS["itlb"],
+    **INSTRUCTION_MODULE_CASE_GROUPS,
+    **ACTIVE_DATA_MODULE_CASE_GROUPS,
+    **MERGE_MODULE_CASE_GROUPS,
+}
+
+COMBO_MODULE_CASE_GROUPS = {
+    ("mixed_region_loop" if slot_id == 0 else f"mixed_region_loop_{slot_id}"): alias_cases(
+        MODULE_CASE_GROUPS["mixed_region_loop"],
+        "mixed_region_loop" if slot_id == 0 else f"mixed_region_loop_{slot_id}",
+        f"mixslot{slot_id}",
+    )
+    for slot_id in range(MIXED_REGION_SLOT_COUNT)
 }
 
 DCACHE_MODULE_CASE_GROUPS = ACTIVE_DATA_MODULE_CASE_GROUPS
@@ -277,12 +334,12 @@ MODULE_LIBRARY_SUITE = {
 
 
 RANDOM_COMBO_SUITE = {
-    "name": "random_combo",
-    "artifact_stem": "random_combo_probe",
-    "csv_name": "random_combo_probe.csv",
-    "module_case_groups": MODULE_CASE_GROUPS,
-    "combo_sizes": [2, 3, 4, 5, 6],
-    "samples_per_size": 10,
+    "name": "combo_linearity",
+    "artifact_stem": "combo_linearity_probe",
+    "csv_name": "combo_linearity.csv",
+    "module_case_groups": COMBO_MODULE_CASE_GROUPS,
+    "combo_sizes": [2, 3, 4, 5, 6, 7],
+    "total_groups": 100,
     "shuffle_rounds": 1,
 }
 
@@ -307,10 +364,6 @@ DCACHE_LINEARITY_SUITE = {
 
 
 TEST_RUNS = [
-    {
-        "kind": "case_library_suite",
-        "config": MODULE_LIBRARY_SUITE,
-    },
     {
         "kind": "random_combo_suite",
         "config": RANDOM_COMBO_SUITE,

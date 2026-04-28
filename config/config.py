@@ -63,6 +63,8 @@ DERIVED_KEYS = [
     # "itlb_walk_mpki",
 ]
 
+MIXED_REGION_SLOT_COUNT = 7
+
 
 ACTIVE_PROFILE = "ohos"
 
@@ -259,7 +261,16 @@ def build_knobs(root, artifact_stem="icache_bench"):
 
 
 def build_base_cfg():
-    return {
+    mixed_region_default = {
+        "size": 8192,
+        "ldr_count_per_unit": 0,
+        "data_mode": "linear",
+        "pages": 1,
+        "lines_per_page": 8,
+        "region_reps": 0,
+        "pos": 2,
+    }
+    cfg = {
         "modules": {
             "cold_block_sequence": {
                 "blocks": 0,
@@ -284,6 +295,9 @@ def build_base_cfg():
                 "branch_pairs_per_unit": 3,
                 "region_reps": 0,
                 "pos": 1,
+            },
+            "mixed_region_loop": {
+                **mixed_region_default,
             },
             "data_stream": {
                 "size": 0,
@@ -348,6 +362,12 @@ def build_base_cfg():
             "cpu_core": 0,
         },
     }
+    for slot_id in range(1, MIXED_REGION_SLOT_COUNT):
+        cfg["modules"][f"mixed_region_loop_{slot_id}"] = {
+            **mixed_region_default,
+            "pos": 2 + slot_id,
+        }
+    return cfg
 
 
 def flatten_cfg(cfg):
@@ -374,6 +394,30 @@ def flatten_cfg(cfg):
         "hot_region_loop_branch_pairs_per_unit": modules["hot_region_loop"]["branch_pairs_per_unit"],
         "hot_region_loop_region_reps": modules["hot_region_loop"]["region_reps"],
         "hot_region_loop_pos": modules["hot_region_loop"]["pos"],
+        "mixed_region_loop_size": modules["mixed_region_loop"]["size"],
+        "mixed_region_loop_ldr_count_per_unit": modules["mixed_region_loop"]["ldr_count_per_unit"],
+        "mixed_region_loop_data_mode": modules["mixed_region_loop"]["data_mode"],
+        "mixed_region_loop_pages": modules["mixed_region_loop"]["pages"],
+        "mixed_region_loop_lines_per_page": modules["mixed_region_loop"]["lines_per_page"],
+        "mixed_region_loop_region_reps": modules["mixed_region_loop"]["region_reps"],
+        "mixed_region_loop_pos": modules["mixed_region_loop"]["pos"],
+        **{
+            key: value
+            for slot_id in range(1, MIXED_REGION_SLOT_COUNT)
+            for key, value in {
+                f"mixed_region_loop_{slot_id}_size": modules[f"mixed_region_loop_{slot_id}"]["size"],
+                f"mixed_region_loop_{slot_id}_ldr_count_per_unit": modules[f"mixed_region_loop_{slot_id}"][
+                    "ldr_count_per_unit"
+                ],
+                f"mixed_region_loop_{slot_id}_data_mode": modules[f"mixed_region_loop_{slot_id}"]["data_mode"],
+                f"mixed_region_loop_{slot_id}_pages": modules[f"mixed_region_loop_{slot_id}"]["pages"],
+                f"mixed_region_loop_{slot_id}_lines_per_page": modules[f"mixed_region_loop_{slot_id}"][
+                    "lines_per_page"
+                ],
+                f"mixed_region_loop_{slot_id}_region_reps": modules[f"mixed_region_loop_{slot_id}"]["region_reps"],
+                f"mixed_region_loop_{slot_id}_pos": modules[f"mixed_region_loop_{slot_id}"]["pos"],
+            }.items()
+        },
         "data_stream_size": modules["data_stream"]["size"],
         "data_stream_stride": modules["data_stream"]["stride"],
         "data_stream_region_reps": modules["data_stream"]["region_reps"],
@@ -442,6 +486,16 @@ def zero_all_modules(cfg):
     hot_region_loop["size"] = 0
     hot_region_loop["branch_pairs_per_unit"] = 3
     hot_region_loop["region_reps"] = 0
+
+    for slot_id in range(MIXED_REGION_SLOT_COUNT):
+        module_name = "mixed_region_loop" if slot_id == 0 else f"mixed_region_loop_{slot_id}"
+        mixed_region_loop = cfg["modules"][module_name]
+        mixed_region_loop["size"] = 0
+        mixed_region_loop["ldr_count_per_unit"] = 0
+        mixed_region_loop["data_mode"] = "linear"
+        mixed_region_loop["pages"] = 1
+        mixed_region_loop["lines_per_page"] = 8
+        mixed_region_loop["region_reps"] = 0
 
     data_stream = cfg["modules"]["data_stream"]
     data_stream["size"] = 0

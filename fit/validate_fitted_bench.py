@@ -93,7 +93,7 @@ def build_instances_from_plan(plan_record):
             params = {
                 field: value
                 for field, value in candidate.row.items()
-                if field not in ("case", "module", "__source_csv", "__source_row")
+                if field not in ("case", "module", "params_json", "__source_csv", "__source_row")
                 and field not in FIT_CONFIG.get("ignored_metrics", [])
                 and not field.endswith(":u")
                 and not field.endswith("_mpki")
@@ -103,6 +103,9 @@ def build_instances_from_plan(plan_record):
             }
 
             normalized = {}
+            params_json = candidate.row.get("params_json")
+            if params_json not in (None, ""):
+                normalized.update(json.loads(params_json))
             for field, value in params.items():
                 text = str(value).strip()
                 if text == "":

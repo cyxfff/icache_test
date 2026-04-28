@@ -6,12 +6,15 @@ from typing import List, Optional
 
 if __package__ in (None, ""):
     from modules.manager import SynthesisModuleManager
+    from modules.mixed_region import MixedRegionBuilder
 else:
     from .modules.manager import SynthesisModuleManager
+    from .modules.mixed_region import MixedRegionBuilder
 
 
 MODULES = SynthesisModuleManager()
 FETCH_AMPLIFIER = getattr(MODULES, "fetch_amplifier", MODULES.cold_block_sequence)
+MIXED_REGION = getattr(MODULES, "mixed_region", getattr(MODULES, "mixed_region_loop", MixedRegionBuilder()))
 MAIN_LAYOUT_CHOICES = ("linear", "page_shuffle", "in_page_shuffle", "full_shuffle")
 
 
@@ -89,6 +92,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hot-l2-size", type=int, default=0, help="Hot L2 loop region size in bytes")
     parser.add_argument("--hot-l2-region-reps", type=int, default=0, help="Hot L2 replay count per outer iteration")
     parser.add_argument("--hot-l2-pos", type=int, default=7, help="Execution order position of the hot L2 module")
+
+    parser.add_argument("--mixed-region-size", type=int, default=0, help="Mixed I+D region size in bytes")
+    parser.add_argument(
+        "--mixed-region-ldr-count-per-unit",
+        type=int,
+        default=0,
+        help="How many pointer-chasing ldr instructions to interleave into each 64B mixed-region unit",
+    )
+    parser.add_argument(
+        "--mixed-region-data-mode",
+        choices=list(MIXED_REGION.DATA_MODE_CHOICES),
+        default="linear",
+        help="Pointer-chain layout policy for mixed-region data accesses",
+    )
+    parser.add_argument(
+        "--mixed-region-pages",
+        type=int,
+        default=1,
+        help="How many 4KB pages to allocate for the mixed-region pointer pool",
+    )
+    parser.add_argument(
+        "--mixed-region-lines-per-page",
+        type=int,
+        default=8,
+        help="How many 64B pointer nodes to place on each mixed-region page",
+    )
+    parser.add_argument(
+        "--mixed-region-region-reps",
+        type=int,
+        default=0,
+        help="Mixed-region replay count per outer iteration",
+    )
+    parser.add_argument(
+        "--mixed-region-pos",
+        type=int,
+        default=2,
+        help="Execution order position of the mixed I+D region module",
+    )
 
     parser.add_argument("--data-stream-size", type=int, default=0, help="Working-set bytes for the data-stream module")
     parser.add_argument(
@@ -371,6 +412,55 @@ def generate(args: argparse.Namespace) -> str:
     hot_l2_size = max(0, args.hot_l2_size)
     hot_l2_region_reps = 0 if hot_l2_size == 0 else max(1, args.hot_l2_region_reps)
     hot_l2_pos = args.hot_l2_pos
+    mixed_region_size = MIXED_REGION.normalize_size_bytes(args.mixed_region_size)
+    mixed_region_ldr_count_per_unit = MIXED_REGION.normalize_ldr_count_per_unit(
+        args.mixed_region_ldr_count_per_unit
+    )
+    mixed_region_data_mode = MIXED_REGION.normalize_data_mode(args.mixed_region_data_mode)
+    mixed_region_pages = MIXED_REGION.normalize_pages(args.mixed_region_pages)
+    mixed_region_lines_per_page = MIXED_REGION.normalize_lines_per_page(args.mixed_region_lines_per_page)
+    mixed_region_region_reps = (
+        0
+        if mixed_region_size == 0 or mixed_region_pages == 0
+        else max(1, args.mixed_region_region_reps)
+    )
+    mixed_region_pos = args.mixed_region_pos
+    mixed_region_slots = [
+        {
+            "slot_id": 0,
+            "prefix": "mixed_region",
+            "label": "mixed_region_loop",
+            "size": mixed_region_size,
+            "ldr_count_per_unit": mixed_region_ldr_count_per_unit,
+            "data_mode": mixed_region_data_mode,
+            "pages": mixed_region_pages,
+            "lines_per_page": mixed_region_lines_per_page,
+            "region_reps": mixed_region_region_reps,
+            "pos": mixed_region_pos,
+        }
+    ]
+    for slot_id, raw_slot in enumerate(getattr(args, "mixed_region_extra_slots", []), start=1):
+        slot_size = MIXED_REGION.normalize_size_bytes(raw_slot.get("size", 0))
+        slot_ldr_count = MIXED_REGION.normalize_ldr_count_per_unit(raw_slot.get("ldr_count_per_unit", 0))
+        slot_data_mode = MIXED_REGION.normalize_data_mode(raw_slot.get("data_mode", "linear"))
+        slot_pages = MIXED_REGION.normalize_pages(raw_slot.get("pages", 1))
+        slot_lines_per_page = MIXED_REGION.normalize_lines_per_page(raw_slot.get("lines_per_page", 8))
+        slot_region_reps = 0 if slot_size == 0 or slot_pages == 0 else max(1, raw_slot.get("region_reps", 0))
+        mixed_region_slots.append(
+            {
+                "slot_id": slot_id,
+                "prefix": f"mixed_region_{slot_id}",
+                "label": f"mixed_region_loop_{slot_id}",
+                "size": slot_size,
+                "ldr_count_per_unit": slot_ldr_count,
+                "data_mode": slot_data_mode,
+                "pages": slot_pages,
+                "lines_per_page": slot_lines_per_page,
+                "region_reps": slot_region_reps,
+                "pos": raw_slot.get("pos", mixed_region_pos + slot_id),
+            }
+        )
+    mixed_region_enabled = any(slot["size"] > 0 and slot["pages"] > 0 for slot in mixed_region_slots)
     data_stream_size = MODULES.data_stream.normalize_size_bytes(args.data_stream_size)
     data_stream_stride = MODULES.data_stream.normalize_stride_bytes(data_stream_size, args.data_stream_stride)
     data_stream_region_reps = 0 if data_stream_size == 0 else max(1, args.data_stream_region_reps)
@@ -446,6 +536,7 @@ def generate(args: argparse.Namespace) -> str:
         and fetch_total_blocks == 0
         and hot_l1_size == 0
         and hot_l2_size == 0
+        and not mixed_region_enabled
         and data_stream_size == 0
         and data_pointer_chase_pages == 0
         and data_page_stride_pages == 0
@@ -531,6 +622,25 @@ def generate(args: argparse.Namespace) -> str:
     )
     data_tlb_indirect_access_count = len(data_tlb_indirect_offsets)
     data_tlb_indirect_pool_bytes = data_tlb_indirect_pages * 4096
+    mixed_region_offsets = MIXED_REGION.build_pointer_offsets(
+        mixed_region_pages,
+        mixed_region_lines_per_page,
+        mixed_region_data_mode,
+        args.seed ^ 0xB5297A4D,
+    )
+    mixed_region_node_count = len(mixed_region_offsets)
+    mixed_region_pool_bytes = mixed_region_pages * 4096
+    mixed_region_loads_per_call = (mixed_region_size // 64) * mixed_region_ldr_count_per_unit
+    for slot in mixed_region_slots[1:]:
+        slot["offsets"] = MIXED_REGION.build_pointer_offsets(
+            slot["pages"],
+            slot["lines_per_page"],
+            slot["data_mode"],
+            args.seed ^ 0xB5297A4D ^ (slot["slot_id"] * 0x45D9F3B),
+        )
+        slot["node_count"] = len(slot["offsets"])
+        slot["pool_bytes"] = slot["pages"] * 4096
+        slot["loads_per_call"] = (slot["size"] // 64) * slot["ldr_count_per_unit"]
 
     call_ret_phys_order = MODULES.tlb_region.shuffled_itlb_phys_order(call_ret_funcs, args.seed ^ 0x165667B1)
     call_ret_exec_order = MODULES.tlb_region.constrained_itlb_exec_order(
@@ -558,6 +668,9 @@ def generate(args: argparse.Namespace) -> str:
 
     hot_l1_entries_per_iter = hot_l1_region_reps
     hot_l2_entries_per_iter = hot_l2_region_reps
+    mixed_region_accesses_per_iter = mixed_region_loads_per_call * mixed_region_region_reps
+    for slot in mixed_region_slots[1:]:
+        mixed_region_accesses_per_iter += slot["loads_per_call"] * slot["region_reps"]
     data_stream_accesses_per_call = 0 if data_stream_size == 0 else ((data_stream_size - 1) // data_stream_stride) + 1
     data_stream_accesses_per_iter = data_stream_accesses_per_call * data_stream_region_reps
     data_pointer_chase_nodes = len(data_pointer_chase_offsets)
@@ -578,6 +691,7 @@ def generate(args: argparse.Namespace) -> str:
     total_frontend_units_per_iter = (
         hot_l1_entries_per_iter
         + hot_l2_entries_per_iter
+        + mixed_region_accesses_per_iter
         + data_stream_accesses_per_iter
         + data_pointer_chase_accesses_per_iter
         + data_page_stride_accesses_per_iter
@@ -596,6 +710,23 @@ def generate(args: argparse.Namespace) -> str:
     ordered_module_loops = [
         (hot_l1_pos, "hot_l1", "CONFIG_HOT_L1_REGION_REPS", "CONFIG_HOT_L1_SIZE > 0", "run_hot_l1_once();"),
         (hot_l2_pos, "hot_l2", "CONFIG_HOT_L2_REGION_REPS", "CONFIG_HOT_L2_SIZE > 0", "run_hot_l2_once();"),
+        (
+            mixed_region_pos,
+            "mixed_region_loop",
+            "CONFIG_MIXED_REGION_REPS",
+            "CONFIG_MIXED_REGION_SIZE > 0 && CONFIG_MIXED_REGION_PAGE_COUNT > 0",
+            "run_mixed_region_once();",
+        ),
+        *[
+            (
+                slot["pos"],
+                slot["label"],
+                f"CONFIG_MIXED_REGION_{slot['slot_id']}_REPS",
+                f"CONFIG_MIXED_REGION_{slot['slot_id']}_SIZE > 0 && CONFIG_MIXED_REGION_{slot['slot_id']}_PAGE_COUNT > 0",
+                f"run_mixed_region_{slot['slot_id']}_once();",
+            )
+            for slot in mixed_region_slots[1:]
+        ],
         (
             data_stream_pos,
             "data_stream",
@@ -708,6 +839,27 @@ def generate(args: argparse.Namespace) -> str:
     out.append(f"#define CONFIG_HOT_L2_POS {hot_l2_pos}u\n")
     out.append(f"#define CONFIG_HOT_L2_ALIGN {hot_l2_align}u\n")
 
+    out.append(f"#define CONFIG_MIXED_REGION_SIZE {mixed_region_size}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_LDR_COUNT_PER_UNIT {mixed_region_ldr_count_per_unit}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_PAGE_COUNT {mixed_region_pages}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_LINES_PER_PAGE {mixed_region_lines_per_page}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_NODE_COUNT {mixed_region_node_count}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_POOL_BYTES {mixed_region_pool_bytes}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_REPS {mixed_region_region_reps}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_POS {mixed_region_pos}u\n")
+    out.append(f'#define CONFIG_MIXED_REGION_DATA_MODE_STR "{mixed_region_data_mode}"\n')
+    for slot in mixed_region_slots[1:]:
+        slot_id = slot["slot_id"]
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_SIZE {slot['size']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LDR_COUNT_PER_UNIT {slot['ldr_count_per_unit']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_PAGE_COUNT {slot['pages']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LINES_PER_PAGE {slot['lines_per_page']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_NODE_COUNT {slot['node_count']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES {slot['pool_bytes']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_REPS {slot['region_reps']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_POS {slot['pos']}u\n")
+        out.append(f'#define CONFIG_MIXED_REGION_{slot_id}_DATA_MODE_STR "{slot["data_mode"]}"\n')
+
     out.append(f"#define CONFIG_DATA_STREAM_SIZE {data_stream_size}u\n")
     out.append(f"#define CONFIG_DATA_STREAM_STRIDE {data_stream_stride}u\n")
     out.append(f"#define CONFIG_DATA_STREAM_REGION_REPS {data_stream_region_reps}u\n")
@@ -796,6 +948,10 @@ def generate(args: argparse.Namespace) -> str:
 
     out.append(f"#define CONFIG_HOT_L1_ENTRIES_PER_ITER {hot_l1_entries_per_iter}u\n")
     out.append(f"#define CONFIG_HOT_L2_ENTRIES_PER_ITER {hot_l2_entries_per_iter}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_LOADS_PER_CALL {mixed_region_loads_per_call}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_ACCESSES_PER_ITER {mixed_region_accesses_per_iter}u\n")
+    for slot in mixed_region_slots[1:]:
+        out.append(f"#define CONFIG_MIXED_REGION_{slot['slot_id']}_LOADS_PER_CALL {slot['loads_per_call']}u\n")
     out.append(f"#define CONFIG_DATA_STREAM_ACCESSES_PER_CALL {data_stream_accesses_per_call}u\n")
     out.append(f"#define CONFIG_DATA_STREAM_ACCESSES_PER_ITER {data_stream_accesses_per_iter}u\n")
     out.append(f"#define CONFIG_DATA_POINTER_CHASE_NODES {data_pointer_chase_nodes}u\n")
@@ -832,6 +988,9 @@ def generate(args: argparse.Namespace) -> str:
     out.append(format_u32_array("kCallRetPhysicalOrder", call_ret_phys_order))
     out.append(format_u32_array("kCallRetExecOrder", call_ret_exec_order))
     out.append(format_u32_array("kCallRetSamples", call_ret_samples))
+    out.append(format_u32_array("kMixedRegionOffsets", mixed_region_offsets))
+    for slot in mixed_region_slots[1:]:
+        out.append(format_u32_array(f"kMixedRegion{slot['slot_id']}Offsets", slot["offsets"]))
     out.append(format_u32_array("kDataPointerChaseOffsets", data_pointer_chase_offsets))
     out.append(format_u32_array("kDataPageStrideOffsets", data_page_stride_offsets))
     out.append(format_u32_array("kDataIndirectGatherOffsets", data_indirect_gather_offsets))
@@ -839,6 +998,14 @@ def generate(args: argparse.Namespace) -> str:
     out.append(format_u32_array("kDataColdStrideOffsets", data_cold_stride_offsets))
     out.append(format_u32_array("kDataTlbIndirectOffsets", data_tlb_indirect_offsets))
 
+    out.append(MIXED_REGION.emit_storage("mixed_region", "CONFIG_MIXED_REGION_POOL_BYTES"))
+    for slot in mixed_region_slots[1:]:
+        out.append(
+            MIXED_REGION.emit_storage(
+                slot["prefix"],
+                f"CONFIG_MIXED_REGION_{slot['slot_id']}_POOL_BYTES",
+            )
+        )
     out.append(MODULES.data_stream.emit_stream_storage("data_stream", "CONFIG_DATA_STREAM_SIZE"))
     out.append(
         MODULES.data_pointer_chase.emit_pointer_chase_storage(
@@ -923,6 +1090,36 @@ def generate(args: argparse.Namespace) -> str:
         )
     )
     out.append(MODULES.hot_region.emit_region_function("hot_l2_blob", hot_l2_size, hot_l2_align))
+    out.append(
+        MIXED_REGION.emit_init_function(
+            "mixed_region",
+            "kMixedRegionOffsets",
+            "CONFIG_MIXED_REGION_NODE_COUNT",
+        )
+    )
+    for slot in mixed_region_slots[1:]:
+        out.append(
+            MIXED_REGION.emit_init_function(
+                slot["prefix"],
+                f"kMixedRegion{slot['slot_id']}Offsets",
+                f"CONFIG_MIXED_REGION_{slot['slot_id']}_NODE_COUNT",
+            )
+        )
+    out.append(
+        MIXED_REGION.emit_region_function(
+            "mixed_region",
+            mixed_region_size,
+            mixed_region_ldr_count_per_unit,
+        )
+    )
+    for slot in mixed_region_slots[1:]:
+        out.append(
+            MIXED_REGION.emit_region_function(
+                slot["prefix"],
+                slot["size"],
+                slot["ldr_count_per_unit"],
+            )
+        )
     out.append(
         MODULES.data_stream.emit_stream_init_function(
             "data_stream",
@@ -1088,6 +1285,18 @@ def generate(args: argparse.Namespace) -> str:
     if hot_l2_size > 0:
         out.append("    hot_l2_blob();\n")
     out.append("}\n\n")
+
+    out.append("__attribute__((used, noinline))\n")
+    out.append("static void run_mixed_region_once(void) {\n")
+    if mixed_region_size > 0 and mixed_region_pages > 0:
+        out.append("    mixed_region_kernel();\n")
+    out.append("}\n\n")
+    for slot in mixed_region_slots[1:]:
+        out.append("__attribute__((used, noinline))\n")
+        out.append(f"static void run_mixed_region_{slot['slot_id']}_once(void) {{\n")
+        if slot["size"] > 0 and slot["pages"] > 0:
+            out.append(f"    {slot['prefix']}_kernel();\n")
+        out.append("}\n\n")
 
     out.append("__attribute__((used, noinline))\n")
     out.append("static void run_fetch_amplifier_once(void) {\n")
@@ -1260,6 +1469,11 @@ def generate(args: argparse.Namespace) -> str:
         out.append("    g_indirect_target_table[0] = NULL;\n")
     out.append("\n")
 
+    if mixed_region_size > 0 and mixed_region_pages > 0:
+        out.append("    init_mixed_region_pool();\n")
+    for slot in mixed_region_slots[1:]:
+        if slot["size"] > 0 and slot["pages"] > 0:
+            out.append(f"    init_{slot['prefix']}_pool();\n")
     if data_stream_size > 0:
         out.append("    init_data_stream_buffer();\n")
     if data_pointer_chase_pages > 0:
@@ -1275,7 +1489,8 @@ def generate(args: argparse.Namespace) -> str:
     if data_tlb_indirect_pages > 0:
         out.append("    init_data_tlb_indirect_buffer();\n")
     if (
-        data_stream_size > 0
+        mixed_region_enabled
+        or data_stream_size > 0
         or data_pointer_chase_pages > 0
         or data_page_stride_pages > 0
         or data_indirect_gather_pages > 0
@@ -1315,6 +1530,18 @@ def generate(args: argparse.Namespace) -> str:
 
 def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
     cfg = dict(flat_cfg)
+    mixed_region_extra_slots = [
+        {
+            "size": int(cfg.get(f"mixed_region_loop_{slot_id}_size", 0)),
+            "ldr_count_per_unit": int(cfg.get(f"mixed_region_loop_{slot_id}_ldr_count_per_unit", 0)),
+            "data_mode": str(cfg.get(f"mixed_region_loop_{slot_id}_data_mode", "linear")),
+            "pages": int(cfg.get(f"mixed_region_loop_{slot_id}_pages", 1)),
+            "lines_per_page": int(cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8)),
+            "region_reps": int(cfg.get(f"mixed_region_loop_{slot_id}_region_reps", 0)),
+            "pos": int(cfg.get(f"mixed_region_loop_{slot_id}_pos", 2 + slot_id)),
+        }
+        for slot_id in range(1, 7)
+    ]
     return argparse.Namespace(
         out=str(out_path),
         main_blocks=int(cfg["cold_block_sequence_blocks"]),
@@ -1338,6 +1565,14 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         hot_l2_size=0,
         hot_l2_region_reps=0,
         hot_l2_pos=max(int(cfg["hot_region_loop_pos"]) + 1, 7),
+        mixed_region_size=int(cfg.get("mixed_region_loop_size", 0)),
+        mixed_region_ldr_count_per_unit=int(cfg.get("mixed_region_loop_ldr_count_per_unit", 0)),
+        mixed_region_data_mode=str(cfg.get("mixed_region_loop_data_mode", "linear")),
+        mixed_region_pages=int(cfg.get("mixed_region_loop_pages", 1)),
+        mixed_region_lines_per_page=int(cfg.get("mixed_region_loop_lines_per_page", 8)),
+        mixed_region_region_reps=int(cfg.get("mixed_region_loop_region_reps", 0)),
+        mixed_region_pos=int(cfg.get("mixed_region_loop_pos", 2)),
+        mixed_region_extra_slots=mixed_region_extra_slots,
         data_stream_size=int(cfg.get("data_stream_size", 0)),
         data_stream_stride=int(cfg.get("data_stream_stride", 64)),
         data_stream_region_reps=int(cfg.get("data_stream_region_reps", 0)),

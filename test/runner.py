@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 
-import itertools
 import math
 import random
 from copy import deepcopy
 
 if __package__ in (None, "", "test"):
-    from config import build_csv_headers, flatten_cfg, zero_all_modules
+    from config import zero_all_modules
+    from test.csv_layout import join_case_labels, metric_headers, with_metric_separators
     from utils import calc_derived, run_one, write_csv_row
 else:
-    from ..config import build_csv_headers, flatten_cfg, zero_all_modules
+    from ..config import zero_all_modules
+    from .csv_layout import join_case_labels, metric_headers, with_metric_separators
     from ..utils import calc_derived, run_one, write_csv_row
 
 
@@ -37,8 +38,8 @@ def set_module_order(cfg, ordered_module_names):
         tail_pos += 1
 
 
-def build_headers(metric_keys, base_cfg):
-    return [*CSV_PREFIX, *build_csv_headers(metric_keys, base_cfg)]
+def build_headers(metric_keys, _base_cfg):
+    return [*CSV_PREFIX, *metric_headers(metric_keys)]
 
 
 def make_blank_row(headers):
@@ -55,19 +56,15 @@ def tag_row(row, suite_name, case_name, order_tag, modules_tag):
 
 def write_tagged_run(cfg, knobs, csv_headers, csv_out, suite_name, case_name, order_tag, modules_tag):
     row, raw_output = run_one(cfg, knobs)
-    write_csv_row(csv_out, csv_headers, tag_row(row, suite_name, case_name, order_tag, modules_tag))
+    tagged_row = with_metric_separators(tag_row(row, suite_name, case_name, order_tag, modules_tag))
+    write_csv_row(csv_out, csv_headers, tagged_row)
     print(f"[{suite_name}] {case_name} order={order_tag} modules={modules_tag}")
     print(raw_output)
-    return row
+    return tagged_row
 
 
 def build_sum_row(base_cfg, metric_keys, rows, selected_cases, suite_name, case_name, order_tag):
-    cfg = deepcopy(base_cfg)
-    zero_all_modules(cfg)
-    for case in selected_cases:
-        apply_module_config(cfg, case["module"], case["params"])
-    row = flatten_cfg(cfg)
-    row = tag_row(row, suite_name, case_name, order_tag, "+".join(case["label"] for case in selected_cases))
+    row = tag_row({}, suite_name, case_name, order_tag, join_case_labels(selected_cases))
 
     for key in metric_keys:
         total = 0
@@ -80,7 +77,7 @@ def build_sum_row(base_cfg, metric_keys, rows, selected_cases, suite_name, case_
         row[key] = total if has_value else ""
 
     row.update(calc_derived(row))
-    return row
+    return with_metric_separators(row)
 
 
 def build_single_cfg(base_cfg, case):
@@ -113,9 +110,9 @@ def run_case_library_suite(base_cfg, knobs, metric_keys, suite_cfg, output_dir):
             csv_headers,
             csv_out,
             suite_name=suite_name,
-            case_name=case["label"],
+            case_name=join_case_labels([case]),
             order_tag="single",
-            modules_tag=case["label"],
+            modules_tag=join_case_labels([case]),
         )
 
 
@@ -166,25 +163,46 @@ def choose_random_case_sets(case_groups, combo_size, sample_count, rng):
     return selected
 
 
+def distribute_total_groups(total_groups, combo_sizes):
+    if total_groups <= 0 or not combo_sizes:
+        return {combo_size: 0 for combo_size in combo_sizes}
+
+    base_count, extra_count = divmod(total_groups, len(combo_sizes))
+    return {
+        combo_size: base_count + (1 if index < extra_count else 0)
+        for index, combo_size in enumerate(combo_sizes)
+    }
+
+
 def run_random_combo_suite(base_cfg, knobs, metric_keys, suite_cfg, output_dir):
     suite_name = suite_cfg["name"]
     csv_headers = build_headers(metric_keys, base_cfg)
     csv_out = output_dir / suite_cfg["csv_name"]
     case_groups = suite_cfg["module_case_groups"]
-    sample_count = suite_cfg.get("samples_per_size")
-    if sample_count is None:
-        sample_count = suite_cfg.get("total_groups", 0)
+    combo_sizes = suite_cfg.get("combo_sizes", [])
+    if suite_cfg.get("samples_per_size") is None and "total_groups" in suite_cfg:
+        samples_by_size = distribute_total_groups(suite_cfg.get("total_groups", 0), combo_sizes)
+        use_global_case_index = True
+    else:
+        sample_count = suite_cfg.get("samples_per_size", 0)
+        samples_by_size = {combo_size: sample_count for combo_size in combo_sizes}
+        use_global_case_index = False
 
     rng = random.Random(base_cfg["build"]["seed"])
-    for combo_size in suite_cfg.get("combo_sizes", []):
+    global_combo_index = 0
+    for combo_size in combo_sizes:
         case_sets = choose_random_case_sets(
             case_groups,
             combo_size,
-            sample_count,
+            samples_by_size.get(combo_size, 0),
             rng,
         )
         for combo_index, selected_cases in enumerate(case_sets):
-            case_name = f"combo_{combo_size}_{combo_index:02d}"
+            if use_global_case_index:
+                case_name = f"combo_{global_combo_index:03d}_s{combo_size}"
+            else:
+                case_name = f"combo_{combo_size}_{combo_index:02d}"
+            global_combo_index += 1
             single_rows = []
 
             for case in selected_cases:
@@ -196,7 +214,7 @@ def run_random_combo_suite(base_cfg, knobs, metric_keys, suite_cfg, output_dir):
                     suite_name=suite_name,
                     case_name=case_name,
                     order_tag="single",
-                    modules_tag=case["label"],
+                    modules_tag=join_case_labels([case]),
                 )
                 single_rows.append(row)
 
@@ -211,7 +229,7 @@ def run_random_combo_suite(base_cfg, knobs, metric_keys, suite_cfg, output_dir):
                     suite_name=suite_name,
                     case_name=case_name,
                     order_tag=order_tag,
-                    modules_tag="+".join(case["label"] for case in ordered_cases),
+                    modules_tag=join_case_labels(ordered_cases),
                 )
 
             write_csv_row(
