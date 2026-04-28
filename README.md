@@ -373,9 +373,7 @@ for (uint32_t rep = 0; rep < 1000; rep++) {
 
 ```
 run_server.py           →  output/combo_linearity.csv  merge-only 单模块+组合/乱序/sum 对比
-test/instruction/       →  instruction-only 单模块脚本归档
-test/data/              →  data-only 单模块脚本归档
-test/merge/             →  instruction+data fused 单模块脚本归档
+test/merge/             →  v2 merge-only fused 模块入口
 fit/combo_codegen.py    →  验证线性叠加假设
 fit/raw_count_sparse_solver.py  →  output/raw_count_sparse_solver_best.json
 fit/validate_fitted_bench.py    →  output/fitted_bench_validation.csv  真机验证
@@ -409,10 +407,9 @@ python3 fit/validate_fitted_bench.py --result-json output/raw_count_sparse_solve
 
 ```
 config/config.py              运行时配置：设备、hdc、PMU 事件列表
-test/experiment_config.py     各模块 sweep 参数定义
-test/instruction/             instruction-only 单模块脚本归档
-test/data/                    data-only 单模块脚本归档
-test/merge/                   instruction+data fused 单模块脚本归档
+test/experiment_config.py     merge-only sweep 参数定义
+test/merge/                   instruction+data fused 模块入口
+modules/mixed_region.py       v2 复合模块：64B 指令单元中均匀插入 pointer-chase ldr
 run_server.py                 上传服务器后的一键入口，默认跑 combo_linearity
 fit/combo_codegen.py          随机组合 probe，验证线性性
 fit/raw_count_sparse_solver.py  11 维 raw count 稀疏求解器
