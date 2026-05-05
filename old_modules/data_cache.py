@@ -111,8 +111,7 @@ class DataCacheBuilder:
     @staticmethod
     def emit_stream_storage(prefix: str, size_macro: str, align: int = 64) -> str:
         return (
-            f"static uint8_t g_{prefix}_buf[{size_macro} > 0 ? {size_macro} : 64u] "
-            f"__attribute__((aligned({align})));\n"
+            f"static uint8_t *g_{prefix}_buf = NULL;\n"
             f"static uint64_t g_{prefix}_sink = 0;\n\n"
         )
 
@@ -196,8 +195,7 @@ class DataCacheBuilder:
     @staticmethod
     def emit_pointer_chase_storage(prefix: str, pool_bytes_macro: str, align: int = 4096) -> str:
         return (
-            f"static uint8_t g_{prefix}_pool[{pool_bytes_macro} > 0 ? {pool_bytes_macro} : 64u] "
-            f"__attribute__((aligned({align})));\n"
+            f"static uint8_t *g_{prefix}_pool = NULL;\n"
             f"static uint32_t g_{prefix}_cursor = 0;\n"
             f"static uint64_t g_{prefix}_sink = 0;\n\n"
         )
@@ -239,8 +237,7 @@ class DataCacheBuilder:
     @staticmethod
     def emit_indirect_gather_storage(prefix: str, pool_bytes_macro: str, count_macro: str, align: int = 4096) -> str:
         return (
-            f"static uint8_t g_{prefix}_pool[{pool_bytes_macro} > 0 ? {pool_bytes_macro} : 64u] "
-            f"__attribute__((aligned({align})));\n"
+            f"static uint8_t *g_{prefix}_pool = NULL;\n"
             f"static uint32_t g_{prefix}_next[{count_macro} > 0 ? {count_macro} : 1u];\n"
             f"static uint32_t g_{prefix}_offsets[{count_macro} > 0 ? {count_macro} : 1u];\n"
             f"static uint32_t g_{prefix}_cursor = 0;\n"

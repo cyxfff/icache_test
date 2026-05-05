@@ -1,11 +1,21 @@
-from .block_loop import BlockLoopBuilder
-from .call_ret_chain import CallRetChainBuilder
-from .data_cache import DataCacheBuilder
-from .hot_region import HotRegionBuilder
-from .indirect_target_set import IndirectTargetSetBuilder
 from .mixed_region import MixedRegionBuilder
-from .plt_stub_chain import PltStubChainBuilder
-from .tlb_region import TLBRegionBuilder
+
+try:
+    from old_modules.block_loop import BlockLoopBuilder
+    from old_modules.call_ret_chain import CallRetChainBuilder
+    from old_modules.data_cache import DataCacheBuilder
+    from old_modules.hot_region import HotRegionBuilder
+    from old_modules.indirect_target_set import IndirectTargetSetBuilder
+    from old_modules.plt_stub_chain import PltStubChainBuilder
+    from old_modules.tlb_region import TLBRegionBuilder
+except ImportError:
+    from ..old_modules.block_loop import BlockLoopBuilder
+    from ..old_modules.call_ret_chain import CallRetChainBuilder
+    from ..old_modules.data_cache import DataCacheBuilder
+    from ..old_modules.hot_region import HotRegionBuilder
+    from ..old_modules.indirect_target_set import IndirectTargetSetBuilder
+    from ..old_modules.plt_stub_chain import PltStubChainBuilder
+    from ..old_modules.tlb_region import TLBRegionBuilder
 
 
 class SynthesisModuleManager:

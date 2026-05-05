@@ -400,6 +400,253 @@ def emit_module_loop(reps_macro: str, enable_macro: str, body: str) -> str:
     )
 
 
+def emit_memory_layout_printer(mixed_region_slots) -> str:
+    regions = [
+        (
+            "data",
+            "data_stream",
+            "g_data_stream_buf",
+            "CONFIG_DATA_STREAM_SIZE",
+            "0",
+            "CONFIG_DATA_STREAM_ACCESSES_PER_CALL",
+            "CONFIG_DATA_STREAM_REGION_REPS",
+        ),
+        (
+            "data",
+            "data_pointer_chase",
+            "g_data_pointer_chase_pool",
+            "CONFIG_DATA_POINTER_CHASE_POOL_BYTES",
+            "CONFIG_DATA_POINTER_CHASE_PAGE_COUNT",
+            "CONFIG_DATA_POINTER_CHASE_NODE_COUNT",
+            "CONFIG_DATA_POINTER_CHASE_REGION_REPS",
+        ),
+        (
+            "data",
+            "data_page_stride",
+            "g_data_page_stride_buf",
+            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
+            "CONFIG_DATA_PAGE_STRIDE_PAGE_COUNT",
+            "CONFIG_DATA_PAGE_STRIDE_OFFSET_COUNT",
+            "CONFIG_DATA_PAGE_STRIDE_REGION_REPS",
+        ),
+        (
+            "data",
+            "data_indirect_gather",
+            "g_data_indirect_gather_pool",
+            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
+            "CONFIG_DATA_INDIRECT_GATHER_PAGE_COUNT",
+            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
+            "CONFIG_DATA_INDIRECT_GATHER_REGION_REPS",
+        ),
+        (
+            "data",
+            "data_hot_stride",
+            "g_data_hot_stride_buf",
+            "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES",
+            "0",
+            "CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT",
+            "CONFIG_DATA_HOT_STRIDE_REGION_REPS",
+        ),
+        (
+            "data",
+            "data_cold_stride",
+            "g_data_cold_stride_buf",
+            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
+            "0",
+            "CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT",
+            "CONFIG_DATA_COLD_STRIDE_REGION_REPS",
+        ),
+        (
+            "data",
+            "data_tlb_indirect",
+            "g_data_tlb_indirect_buf",
+            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
+            "CONFIG_DATA_TLB_INDIRECT_PAGE_COUNT",
+            "CONFIG_DATA_TLB_INDIRECT_ACCESS_COUNT",
+            "CONFIG_DATA_TLB_INDIRECT_REGION_REPS",
+        ),
+    ]
+    for slot in mixed_region_slots:
+        slot_id = slot["slot_id"]
+        if slot_id == 0:
+            regions.append(
+                (
+                    "mixed-data",
+                    "mixed_region_loop",
+                    "g_mixed_region_pool",
+                    "CONFIG_MIXED_REGION_POOL_BYTES",
+                    "CONFIG_MIXED_REGION_PAGE_COUNT",
+                    "CONFIG_MIXED_REGION_NODE_COUNT",
+                    "CONFIG_MIXED_REGION_REPS",
+                )
+            )
+        else:
+            regions.append(
+                (
+                    "mixed-data",
+                    f"mixed_region_loop_{slot_id}",
+                    f"g_mixed_region_{slot_id}_pool",
+                    f"CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES",
+                    f"CONFIG_MIXED_REGION_{slot_id}_PAGE_COUNT",
+                    f"CONFIG_MIXED_REGION_{slot_id}_NODE_COUNT",
+                    f"CONFIG_MIXED_REGION_{slot_id}_REPS",
+                )
+            )
+
+    entries = "".join(
+        (
+            f'        {{"{kind}", "{name}", {base}, (uint64_t)({bytes_macro}), '
+            f"(uint64_t)({pages_macro}), (uint64_t)({nodes_macro}), (uint64_t)({reps_macro})}},\n"
+        )
+        for kind, name, base, bytes_macro, pages_macro, nodes_macro, reps_macro in regions
+    )
+
+    return (
+        "typedef struct memory_region_info {\n"
+        "    const char *kind;\n"
+        "    const char *name;\n"
+        "    const void *base;\n"
+        "    uint64_t bytes;\n"
+        "    uint64_t pages;\n"
+        "    uint64_t nodes;\n"
+        "    uint64_t reps;\n"
+        "} memory_region_info_t;\n\n"
+        "static int compare_memory_region_info(const void *lhs, const void *rhs) {\n"
+        "    const memory_region_info_t *left = (const memory_region_info_t *)lhs;\n"
+        "    const memory_region_info_t *right = (const memory_region_info_t *)rhs;\n"
+        "    uintptr_t left_addr = (uintptr_t)left->base;\n"
+        "    uintptr_t right_addr = (uintptr_t)right->base;\n"
+        "    return (left_addr > right_addr) - (left_addr < right_addr);\n"
+        "}\n\n"
+        "static void print_memory_layout(uint64_t iters) {\n"
+        "    memory_region_info_t regions[] = {\n"
+        f"{entries}"
+        "    };\n"
+        "    const size_t region_count = sizeof(regions) / sizeof(regions[0]);\n"
+        "    qsort(regions, region_count, sizeof(regions[0]), compare_memory_region_info);\n"
+        "    uint64_t total_data_bytes = 0;\n"
+        "    size_t active_regions = 0;\n"
+        "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
+        "        if (regions[idx].bytes == 0) continue;\n"
+        "        total_data_bytes += regions[idx].bytes;\n"
+        "        ++active_regions;\n"
+        "    }\n"
+        "    puts(\"===== memory layout =====\");\n"
+        "    printf(\"iters=%\" PRIu64 \" active_data_regions=%zu total_data_bytes=%\" PRIu64 \"\\n\", iters, active_regions, total_data_bytes);\n"
+        "    uintptr_t previous_end = 0;\n"
+        "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
+        "        if (regions[idx].bytes == 0) continue;\n"
+        "        uintptr_t start = (uintptr_t)regions[idx].base;\n"
+        "        uintptr_t end = start + (uintptr_t)regions[idx].bytes;\n"
+        "        uint64_t gap_before = 0;\n"
+        "        if (previous_end != 0 && start > previous_end) {\n"
+        "            gap_before = (uint64_t)(start - previous_end);\n"
+        "        }\n"
+        "        printf(\"data_region kind=%s name=%s start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" bytes=%\" PRIu64 \" pages=%\" PRIu64 \" nodes=%\" PRIu64 \" reps=%\" PRIu64 \" gap_before=%\" PRIu64 \"\\n\",\n"
+        "               regions[idx].kind,\n"
+        "               regions[idx].name,\n"
+        "               start,\n"
+        "               end,\n"
+        "               regions[idx].bytes,\n"
+        "               regions[idx].pages,\n"
+        "               regions[idx].nodes,\n"
+        "               regions[idx].reps,\n"
+        "               gap_before);\n"
+        "        if (end > previous_end) previous_end = end;\n"
+        "    }\n"
+        "    fflush(stdout);\n"
+        "}\n\n"
+    )
+
+
+def emit_memory_region_allocator() -> str:
+    return (
+        "static bool allocate_memory_region(void **ptr, uint64_t bytes, size_t alignment, const char *name) {\n"
+        "    if (bytes == 0) return true;\n"
+        "    if (bytes > (uint64_t)((size_t)-1)) {\n"
+        "        fprintf(stderr, \"[ERROR] %s bytes=%\" PRIu64 \" exceeds size_t max\\n\", name, bytes);\n"
+        "        return false;\n"
+        "    }\n"
+        "    int rc = posix_memalign(ptr, alignment, (size_t)bytes);\n"
+        "    if (rc != 0 || *ptr == NULL) {\n"
+        "        fprintf(stderr, \"[ERROR] failed to allocate %s bytes=%\" PRIu64 \" align=%zu rc=%d\\n\", name, bytes, alignment, rc);\n"
+        "        return false;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n\n"
+    )
+
+
+def emit_memory_allocation_call(name: str, symbol: str, bytes_macro: str, align: int) -> str:
+    return (
+        f"    if (!allocate_memory_region((void **)&{symbol}, (uint64_t)({bytes_macro}), "
+        f"{align}u, \"{name}\")) return 2;\n"
+    )
+
+
+def emit_memory_allocation_calls(mixed_region_slots) -> str:
+    calls = [
+        emit_memory_allocation_call("data_stream", "g_data_stream_buf", "CONFIG_DATA_STREAM_SIZE", 64),
+        emit_memory_allocation_call(
+            "data_pointer_chase",
+            "g_data_pointer_chase_pool",
+            "CONFIG_DATA_POINTER_CHASE_POOL_BYTES",
+            4096,
+        ),
+        emit_memory_allocation_call(
+            "data_page_stride",
+            "g_data_page_stride_buf",
+            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
+            4096,
+        ),
+        emit_memory_allocation_call(
+            "data_indirect_gather",
+            "g_data_indirect_gather_pool",
+            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
+            4096,
+        ),
+        emit_memory_allocation_call(
+            "data_hot_stride",
+            "g_data_hot_stride_buf",
+            "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES",
+            64,
+        ),
+        emit_memory_allocation_call(
+            "data_cold_stride",
+            "g_data_cold_stride_buf",
+            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
+            4096,
+        ),
+        emit_memory_allocation_call(
+            "data_tlb_indirect",
+            "g_data_tlb_indirect_buf",
+            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
+            4096,
+        ),
+    ]
+    for slot in mixed_region_slots:
+        slot_id = slot["slot_id"]
+        if slot_id == 0:
+            calls.append(
+                emit_memory_allocation_call(
+                    "mixed_region_loop",
+                    "g_mixed_region_pool",
+                    "CONFIG_MIXED_REGION_POOL_BYTES",
+                    4096,
+                )
+            )
+            continue
+        calls.append(
+            emit_memory_allocation_call(
+                f"mixed_region_loop_{slot_id}",
+                f"g_mixed_region_{slot_id}_pool",
+                f"CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES",
+                4096,
+            )
+        )
+    return "".join(calls)
+
+
 def generate(args: argparse.Namespace) -> str:
     main_total_blocks = max(0, args.main_blocks)
     main_region_reps = 0 if main_total_blocks == 0 else max(1, args.main_region_reps)
@@ -1050,6 +1297,8 @@ def generate(args: argparse.Namespace) -> str:
     out.append(
         "static void *g_indirect_target_table[CONFIG_INDIRECT_TARGET_COUNT > 0 ? CONFIG_INDIRECT_TARGET_COUNT : 1u];\n\n"
     )
+    out.append(emit_memory_region_allocator())
+    out.append(emit_memory_layout_printer(mixed_region_slots))
 
     out.append(
         '__attribute__((used, noinline))\n'
@@ -1468,6 +1717,10 @@ def generate(args: argparse.Namespace) -> str:
     if indirect_target_count == 0:
         out.append("    g_indirect_target_table[0] = NULL;\n")
     out.append("\n")
+
+    out.append(emit_memory_allocation_calls(mixed_region_slots))
+    out.append("\n")
+    out.append("    print_memory_layout(iters);\n\n")
 
     if mixed_region_size > 0 and mixed_region_pages > 0:
         out.append("    init_mixed_region_pool();\n")

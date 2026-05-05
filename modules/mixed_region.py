@@ -77,8 +77,7 @@ class MixedRegionBuilder:
     @classmethod
     def emit_storage(cls, prefix: str, pool_bytes_macro: str, align: int = 4096) -> str:
         return (
-            f"static uint8_t g_{prefix}_pool[{pool_bytes_macro} > 0 ? {pool_bytes_macro} : 64u] "
-            f"__attribute__((aligned({align})));\n"
+            f"static uint8_t *g_{prefix}_pool = NULL;\n"
             f"static uintptr_t g_{prefix}_cursor = 0;\n"
             f"static uint64_t g_{prefix}_sink = 0;\n\n"
         )
