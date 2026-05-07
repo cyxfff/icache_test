@@ -1,4 +1,5 @@
 import random
+from math import gcd
 from typing import List
 
 
@@ -7,7 +8,22 @@ class MixedRegionBuilder:
     PAGE_BYTES = 4096
     UNIT_INSNS = 16
     FIXED_INSNS = 2
-    DATA_MODE_CHOICES = ("linear", "page_shuffle", "cross_page", "indirect")
+    DATA_MODE_CHOICES = (
+        "linear",
+        "line_stride",
+        "page_stride",
+        "line_shuffle",
+        "random",
+        # Legacy aliases kept so old CSV/config rows still build.
+        "page_shuffle",
+        "cross_page",
+        "indirect",
+    )
+    DATA_MODE_ALIASES = {
+        "page_shuffle": "line_shuffle",
+        "cross_page": "page_stride",
+        "indirect": "random",
+    }
 
     @classmethod
     def normalize_size_bytes(cls, total_bytes: int) -> int:
@@ -25,6 +41,27 @@ class MixedRegionBuilder:
         return max(1, min(cls.PAGE_BYTES // cls.CACHE_LINE_BYTES, int(lines_per_page)))
 
     @classmethod
+    def normalize_nodes_per_page(cls, nodes_per_page: int) -> int:
+        return cls.normalize_lines_per_page(nodes_per_page)
+
+    @staticmethod
+    def normalize_stride(stride: int) -> int:
+        return max(1, int(stride))
+
+    @classmethod
+    def normalize_cycle_stride(cls, item_count: int, stride: int) -> int:
+        if item_count <= 1:
+            return 1
+        candidate = cls.normalize_stride(stride) % item_count
+        if candidate == 0:
+            candidate = 1
+        while gcd(candidate, item_count) != 1:
+            candidate += 1
+            if candidate >= item_count:
+                candidate = 1
+        return candidate
+
+    @classmethod
     def normalize_ldr_count_per_unit(cls, ldr_count_per_unit: int) -> int:
         max_ldr_count = max(0, cls.UNIT_INSNS - cls.FIXED_INSNS)
         return max(0, min(max_ldr_count, int(ldr_count_per_unit)))
@@ -34,39 +71,63 @@ class MixedRegionBuilder:
         mode = str(data_mode)
         if mode not in cls.DATA_MODE_CHOICES:
             raise ValueError(f"unsupported mixed-region data mode: {mode}")
-        return mode
+        return cls.DATA_MODE_ALIASES.get(mode, mode)
 
-    def build_pointer_offsets(self, page_count: int, lines_per_page: int, data_mode: str, seed: int) -> List[int]:
+    def selected_line_indices(self, nodes_per_page: int) -> List[int]:
+        nodes_per_page = self.normalize_nodes_per_page(nodes_per_page)
+        lines_per_page = self.PAGE_BYTES // self.CACHE_LINE_BYTES
+        return [
+            (index * lines_per_page) // nodes_per_page
+            for index in range(nodes_per_page)
+        ]
+
+    def build_pointer_offsets(
+        self,
+        page_count: int,
+        lines_per_page: int,
+        data_mode: str,
+        seed: int,
+        stride_lines: int = 1,
+        stride_pages: int = 1,
+        nodes_per_page: int = None,
+    ) -> List[int]:
         page_count = self.normalize_pages(page_count)
-        lines_per_page = self.normalize_lines_per_page(lines_per_page)
+        nodes_per_page = self.normalize_nodes_per_page(
+            lines_per_page if nodes_per_page is None else nodes_per_page
+        )
         data_mode = self.normalize_data_mode(data_mode)
         if page_count <= 0:
             return []
 
         rng = random.Random(seed ^ 0x6C8E9CF5)
+        line_indices = self.selected_line_indices(nodes_per_page)
         all_offsets = [
             page_index * self.PAGE_BYTES + line_index * self.CACHE_LINE_BYTES
             for page_index in range(page_count)
-            for line_index in range(lines_per_page)
+            for line_index in line_indices
         ]
         if data_mode == "linear":
             return all_offsets
 
-        if data_mode == "page_shuffle":
+        if data_mode == "line_shuffle":
             offsets: List[int] = []
             for page_index in range(page_count):
-                line_order = list(range(lines_per_page))
+                line_order = list(line_indices)
                 rng.shuffle(line_order)
                 base = page_index * self.PAGE_BYTES
                 for line_index in line_order:
                     offsets.append(base + line_index * self.CACHE_LINE_BYTES)
             return offsets
 
-        if data_mode == "cross_page":
-            page_order = list(range(page_count))
-            rng.shuffle(page_order)
-            offsets = []
-            for line_index in range(lines_per_page):
+        if data_mode == "line_stride":
+            step = self.normalize_cycle_stride(len(all_offsets), stride_lines)
+            return [all_offsets[(index * step) % len(all_offsets)] for index in range(len(all_offsets))]
+
+        if data_mode == "page_stride":
+            page_step = self.normalize_cycle_stride(page_count, stride_pages)
+            page_order = [(index * page_step) % page_count for index in range(page_count)]
+            offsets: List[int] = []
+            for line_index in line_indices:
                 for page_index in page_order:
                     offsets.append(page_index * self.PAGE_BYTES + line_index * self.CACHE_LINE_BYTES)
             return offsets

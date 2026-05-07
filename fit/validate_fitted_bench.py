@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-if __package__ in (None, ""):
+if __package__ in (None, "", "fit"):
     SCRIPT_DIR = Path(__file__).resolve().parent
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     if str(SCRIPT_DIR) not in sys.path:

@@ -18,7 +18,7 @@ except ImportError:
     Bounds = LinearConstraint = milp = None
     HAS_SCIPY = False
 
-if __package__ in (None, ""):
+if __package__ in (None, "", "fit"):
     SCRIPT_DIR = Path(__file__).resolve().parent
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     if str(SCRIPT_DIR) not in sys.path:
@@ -63,10 +63,10 @@ else:
 
 
 EPS = 1e-12
-# This solver only searches in the 11-D raw-count space below.
-# Ratios such as miss_rate / mpki are derived afterwards from the
-# final raw-count prediction and are not part of the linear solve.
-RAW_VECTOR_METRICS = [
+# Candidate raw-count dimensions. The active solve vector is selected from
+# this list by the target: old I-side-only targets stay 11-D, while targets
+# that include D-cache / D-TLB / LLC metrics automatically become wider.
+DEFAULT_RAW_VECTOR_METRICS = [
     "instructions:u",
     "br_retired:u",
     "br_mis_pred:u",
@@ -78,7 +78,18 @@ RAW_VECTOR_METRICS = [
     "l2i_cache_refill:u",
     "l2i_tlb:u",
     "l2i_tlb_refill:u",
+    "l1d_cache:u",
+    "l1d_cache_refill:u",
+    "l1d_tlb:u",
+    "l1d_tlb_refill:u",
+    "l2d_cache:u",
+    "l2d_cache_refill:u",
+    "l2d_tlb:u",
+    "l2d_tlb_refill:u",
+    "ll_cache:u",
+    "ll_cache_miss:u",
 ]
+RAW_VECTOR_METRICS = list(DEFAULT_RAW_VECTOR_METRICS)
 
 
 SEARCH_CONFIG = {
@@ -98,7 +109,7 @@ SEARCH_CONFIG = {
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Sparse search in 11-D raw count space.")
+    parser = argparse.ArgumentParser(description="Sparse search in target-selected raw count space.")
     parser.add_argument("--max-templates", type=int, default=SEARCH_CONFIG["max_templates"])
     parser.add_argument("--seed-beam", type=int, default=SEARCH_CONFIG["seed_beam"])
     parser.add_argument("--beam-size", type=int, default=SEARCH_CONFIG["beam_size"])
@@ -161,10 +172,10 @@ def raw_metric_to_mpki(raw_key):
     return raw_key[: -len(":u")] + "_mpki"
 
 
-def build_target_raw_counts(target, fit_total_instructions):
+def derive_target_raw_counts(target, fit_total_instructions):
     if "ipc" in target:
         raise ValueError(
-            "raw_count_sparse_solver only supports the 11 raw-count dimensions; "
+            "raw_count_sparse_solver only supports raw-count dimensions; "
             "remove 'ipc' from FIT_CONFIG['target'] for this solver."
         )
 
@@ -196,13 +207,38 @@ def build_target_raw_counts(target, fit_total_instructions):
                 counts[denominator_key] = numerator / rate_value
                 changed = True
 
-    missing = [metric for metric in RAW_VECTOR_METRICS if metric not in counts]
+    return counts
+
+
+def resolve_raw_vector_metrics(config, target_counts):
+    configured = config.get("raw_vector_metrics", "auto")
+    if configured in (None, "", "auto"):
+        metrics = [metric for metric in DEFAULT_RAW_VECTOR_METRICS if metric in target_counts]
+    elif configured == "all":
+        metrics = list(DEFAULT_RAW_VECTOR_METRICS)
+    else:
+        metrics = [TARGET_KEY_ALIASES.get(metric, metric) for metric in configured]
+
+    if "instructions:u" not in metrics:
+        metrics.insert(0, "instructions:u")
+
+    unknown = [metric for metric in metrics if metric not in RAW_METRIC_SET and metric != "instructions:u"]
+    if unknown:
+        raise ValueError(f"raw_vector_metrics contains unsupported raw events: {unknown}")
+    return metrics
+
+
+def build_target_raw_counts(target, fit_total_instructions, config=None):
+    counts = derive_target_raw_counts(target, fit_total_instructions)
+    raw_vector_metrics = resolve_raw_vector_metrics(config or {}, counts)
+
+    missing = [metric for metric in raw_vector_metrics if metric not in counts]
     if missing:
         raise ValueError(
             "unable to derive all raw target counts from FIT_CONFIG['target']; "
             f"missing={missing}"
         )
-    return {metric: counts[metric] for metric in RAW_VECTOR_METRICS}
+    return {metric: counts[metric] for metric in raw_vector_metrics}
 
 
 def weighted_nnls(A, y, max_iter, warm_start=None):
@@ -683,6 +719,8 @@ def result_json_record(rank, result, target_raw, target):
 
 
 def main():
+    global RAW_VECTOR_METRICS
+
     args = parse_args()
     SEARCH_CONFIG["max_templates"] = int(args.max_templates)
     SEARCH_CONFIG["seed_beam"] = int(args.seed_beam)
@@ -704,7 +742,8 @@ def main():
     if ignored:
         target = {metric: value for metric, value in target.items() if metric not in ignored}
 
-    target_raw = build_target_raw_counts(target, float(config["fit_total_instructions"]))
+    target_raw = build_target_raw_counts(target, float(config["fit_total_instructions"]), config=config)
+    RAW_VECTOR_METRICS = list(target_raw.keys())
     candidates = load_candidates(config)
 
     if args.use_milp:

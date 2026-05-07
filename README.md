@@ -1,435 +1,222 @@
-# icache_hiperf
+# icache_test
 
-用少量可控的合成模块逼近真实程序的前端 PMU 画像。
+这个目录现在主要用于验证一种 **instruction + data fused** 的合成模板：在固定大小的指令区域里，把一部分 `nop` 替换成 pointer-chasing load，让同一个模块同时产生 I-side 和 D-side 行为。
 
-## 程序目的
+当前重点不是旧版的纯 instruction 模块库，而是 `mixed_region_loop` 以及它的多 slot 组合线性实验。
 
-真实程序的前端行为（I-cache miss、ITLB miss、branch 等）往往难以直接复现。本工程的思路是：
+## 当前实验模型
 
-1. 把前端行为拆成若干个语义清晰、参数可控的基础模块。
-2. 单独测量每个模块在不同参数下的 PMU 计数向量（11 维 raw count）。
-3. 验证多模块组合时计数是否近似线性叠加。
-4. 用稀疏组合求解器找到一组模块及其权重，使组合后的 PMU 向量逼近目标程序的画像。
+`mixed_region_loop` 的核心形态是：
 
-最终产物是一个整数 `repeat_plan`，可以直接回放成真实 benchmark 在设备上验证。
+```asm
+mov x11, cursor
 
----
+// 每个 64B code unit:
+add x9, x9, #1
+eor x10, x10, x9
+nop / ldr x11, [x11] / nop ...
 
-## 拟合思想
-
-### 线性叠加假设
-
-如果模块 A 单独跑产生计数向量 $\mathbf{v}_A$，模块 B 产生 $\mathbf{v}_B$，那么当两者组合运行时，期望：
-
-$$\mathbf{v}_{A+B} \approx \mathbf{v}_A + \mathbf{v}_B$$
-
-这个假设在模块间耦合较弱时成立。`fit/combo_codegen.py` 专门用来验证这一点。
-
-### 11 维 raw count 空间
-
-求解器只在以下 11 个原始计数维度上做线性拟合：
-
-```
-instructions:u        br_retired:u          br_mis_pred:u
-l1i_cache:u           l1i_cache_refill:u
-l1i_tlb:u             l1i_tlb_refill:u
-l2i_cache:u           l2i_cache_refill:u
-l2i_tlb:u             l2i_tlb_refill:u
+mov cursor, x11
 ```
 
-`miss_rate`、`mpki` 等比率指标不进入线性空间，而是从最终 raw count 反推得到。这样做的原因是比率不满足线性叠加，直接拟合会引入系统性误差。
+也就是说，每个 active slot 有自己的：
 
+- instruction kernel，例如 `mixed_region_kernel`、`mixed_region_1_kernel`
+- data pool，例如 `g_mixed_region_pool`、`g_mixed_region_1_pool`
+- cursor，例如 `g_mixed_region_cursor`、`g_mixed_region_1_cursor`
+- `region_reps`
 
-### 求解过程
+组合实验不是把多个参数硬塞进同一个函数，而是启用多个独立 slot，然后在主循环里按顺序执行：
 
-给定目标向量 $\mathbf{t} \in \mathbb{R}^{11}$，从单模块参数库（每个模块 sweep 后的 CSV）中选出不超过 `max_templates` 个模板 $\{\mathbf{v}_i\}$，通过如下步骤拟合：
+```c
+while (!g_abort && completed_iters < iters) {
+    for (rep = 0; rep < CONFIG_MIXED_REGION_4_REPS; ++rep)
+        run_mixed_region_4_once();
 
-1. **构建候选集**：所有单模块 case 的 11 维 raw count 作为候选模板。
-2. **稀疏组合搜索**：采用启发式 beam search（宽度受限的分支枚举），枚举所有组合方式，目标是找到一组非负系数 $\{k_i\}$，使得 $\sum_i k_i \mathbf{v}_i$ 尽量逼近 $\mathbf{t}$，并且 $k_i$ 尽量稀疏（大部分为 0）。
-3. **容差约束**：允许每一维 raw count 有 $\pm\epsilon$（如 10%）的容差。
-4. **连续到整数量化**：先在连续空间求解 $k_i$，再量化为整数 repeat plan，保证实际回放可用。
-5. **输出 top-k 结果**：保存所有满足容差的 top-k 组合，供后续 bench 回放和真机验证。
+    for (rep = 0; rep < CONFIG_MIXED_REGION_6_REPS; ++rep)
+        run_mixed_region_6_once();
 
+    ++completed_iters;
+}
+```
 
-**主流程代码片段（实际实现，见 fit/raw_count_sparse_solver.py）：**
+这个顺序执行本身不是线性成立的原因；更关键的是每个 slot 的 code/data/cursor 是独立的，且 data pointer 通过 inline asm operand 显式进入 `x11`，不是依赖跨函数调用保留某个寄存器。
+
+## D-stream 的真实含义
+
+当前 D 侧是一个 pointer-chasing 环。
+
+初始化时会生成一组 offset：
+
 ```python
-def search_repeat_plan(target_vec, candidate_matrix, max_templates, tol, topk):
-  # 1. 枚举所有不超过 max_templates 的稀疏组合（beam search）
-  for combo in beam_search_candidates(candidate_matrix, max_templates):
-    # 2. 用 MILP 求解整数 repeat 方案
-    repeat_plan, loss = solve_milp(combo, target_vec, tol)
-    if repeat_plan is not None:
-      # 3. 检查误差是否满足容差，保存 top-k
-      if loss < tol:
-        results.append((repeat_plan, loss, combo))
-  # 4. 按 loss 排序，输出 top-k 方案
-  return sorted(results, key=lambda x: x[1])[:topk]
-
-# 其中 beam_search_candidates 负责组合空间剪枝，solve_milp 调用 pulp/cbc 求解整数规划：
-def solve_milp(combo, target_vec, tol):
-  # combo: (n, 11) matrix, target_vec: (11,)
-  prob = pulp.LpProblem("repeat_plan", pulp.LpMinimize)
-  k_vars = [pulp.LpVariable(f"k_{i}", lowBound=0, cat="Integer") for i in range(len(combo))]
-  # 目标函数：加权 L1/L2 距离
-  loss_terms = []
-  for j in range(11):
-    pred_j = pulp.lpSum([combo[i][j] * k_vars[i] for i in range(len(combo))])
-    loss_terms.append(abs(pred_j - target_vec[j]))
-    # 容差约束
-    prob += pred_j >= target_vec[j] * (1 - tol)
-    prob += pred_j <= target_vec[j] * (1 + tol)
-  prob += pulp.lpSum(loss_terms)
-  # 求解
-  status = prob.solve()
-  if status == pulp.LpStatusOptimal:
-    repeat_plan = [int(k.value()) for k in k_vars]
-    loss = pulp.value(prob.objective)
-    return repeat_plan, loss
-  return None, None
+offset = page_index * 4096 + line_index * 64
 ```
-> 详细实现见 fit/raw_count_sparse_solver.py，beam_search_candidates 负责高效枚举稀疏组合，solve_milp 用 pulp/cbc 求解整数 repeat 方案。
 
----
-
-## 拟合策略与Loss判定
-
-### 搜索与权重设计
-
-- **候选集**：所有单模块 sweep 得到的 11 维 raw count 向量（如 output/*.csv，每一行一个case）。
-- **稀疏组合策略**：
-  - 采用启发式 beam search（宽度受限的分支枚举），枚举所有不超过 max_templates 个模板的组合。
-  - 每组组合都用混合整数规划（MILP）求解权重 $k_i$，而不是NNLS。
-  - 权重 $k_i$ 物理意义是“该模块case需要重复多少次”，直接为整数。
-  - MILP 可灵活加约束（如稀疏度、最大误差、模板家族等），并能直接输出整数 repeat plan。
-
-### Loss函数与优劣判定
-
-- **Loss定义**：
-  - 默认采用加权 L1/L2 距离：
-    $$ Loss = \sum_{j=1}^{11} w_j \cdot |\hat{y}_j - t_j| $$
-    其中 $\hat{y}_j$ 是组合预测的第 j 维计数，$t_j$ 是目标向量，$w_j$ 是每一维的权重。
-  - 权重 $w_j$ 可根据实际关注的指标调整（如更关注 miss/refill 就加大对应权重）。
-  - 也可采用最大相对误差（box violation）作为判据。
-- **判定更优解**：
-  - Loss 越小越优。
-  - 若所有维度都在容差范围内（如 10%），则优先选用稀疏度更高（用的模板更少）的解。
-  - 支持输出 top-k 方案，供人工或自动后处理。
-
-### 真实数据举例
-
-以 cold_block_sequence 为例：
-
-| case | direct_run_len | layout | instructions | br_retired | l1i_cache | l2i_cache |
-|------|---------------|--------|--------------|------------|-----------|-----------|
-| cold_b1000_d1_linear | 1 | linear | 28170342 | 3049385 | 21474922 | 7551 |
-| cold_b1000_d8_linear | 8 | linear | 17671726 | 1299790 | 3077464 | 5707 |
-| cold_b1000_d1_bitrev | 1 | in_page_shuffle | 28170340 | 3049385 | 18892524 | 10872 |
-
-不同参数 sweep，向量方向和量级差异明显。
-
----
-
-## 模块介绍
-
-### `cold_block_sequence`
-
-**用途**：构造离散块链，提供冷取指路径，主要塑造 L2 I-cache 和 L2 TLB 相关计数。
-
-**核心参数**：
-
-| 参数 | 说明 | 影响 |
-|------|------|------|
-| `blocks` | 基本块总数 | 决定代码工作集大小，越大 L2 I-cache/TLB miss 越多 |
-| `direct_run_len` | 连续直接跳转次数 | 每隔 N 步插入一次间接调度，控制 BTB/间接分支压力 |
-| `layout` | 块物理排列方式 | `linear`：顺序；`in_page_shuffle`：页内位反转，打散页内局部性 |
-| `region_reps` | 外层重复次数 | 线性放大所有计数 |
-
-**sweep 范围**：`blocks = 1000..20000`，`direct_run_len = [1,2,4,8,16]`
-
-**生成代码示例**（`blocks=5000, direct_run_len=4, layout=linear`）：
+然后把每个节点写成指向下一个节点：
 
 ```c
-// 生成 5000 个 64 字节对齐的基本块函数
-// blocks=5000 → 工作集 = 5000 × 64B = 312KB，远超 L1 I-cache
-
-__attribute__((naked, aligned(64)))
-static void block_0(void) {
-    asm volatile(
-        ".rept 15\n\t"   // 15 条 nop 填满 64B 块（15×4 + 1×4 = 64B）
-        "nop\n\t"
-        ".endr\n\t"
-        "b block_1\n\t"  // 直接跳转到下一块（direct_run_len 控制何时改为间接）
-        ::: "x0","x9","x16","x17","cc","memory");
-}
-
-// direct_run_len=4：每 4 步直接跳转后，第 4 步改为间接调度
-// 即 block_3 不直接 b block_4，而是：
-__attribute__((naked, aligned(64)))
-static void block_3(void) {
-    asm volatile(
-        ".rept 15\n\t"
-        "nop\n\t"
-        ".endr\n\t"
-        // (3+1) % 4 == 0 → 间接调度：把下一块 ID 装入 x0，跳 dispatcher
-        "movz x0, #4\n\t"          // 下一块逻辑 ID = 4
-        "b dispatch_main_indirect\n\t"
-        ::: "x0","x9","x16","x17","cc","memory");
-}
-// direct_run_len 越小 → 间接跳转越密集 → 更多 BTB 压力
-// direct_run_len 越大 → 几乎全是直接跳转 → 更纯粹的 I-cache 压力
-
-// layout=in_page_shuffle：块的物理顺序按页内位反转排列
-// 例如页内 8 个块的访问顺序：0,4,2,6,1,5,3,7（位反转）
-// 打散页内空间局部性，增加 TLB 压力
-
-for (uint32_t rep = 0; rep < region_reps; rep++) {
-    block_0();  // 触发整条链：block_0 → block_1 → ... → block_4999 → block_0
-                // 每次跨 64B 边界 → L1 I-cache miss → L2 I-cache access
-                // 每次跨 4KB 页边界 → ITLB access
-}
+*(uintptr_t *)(pool + cur) = (uintptr_t)(pool + nxt);
+cursor = (uintptr_t)(pool + offsets[0]);
 ```
 
----
+运行时反复执行：
 
-### `itlb`
-
-**用途**：构造跨页代码池，专门塑造 L1/L2 ITLB 相关计数。
-
-**核心参数**：
-
-| 参数 | 说明 | 影响 |
-|------|------|------|
-| `funcs` | 函数总数（每个函数独占一个 4KB 页） | 决定 ITLB 工作集，越大 L2 ITLB miss 越多 |
-| `lines_per_page` | 每个函数执行几条 cache line 的指令 | 控制每次访问的取指量，影响 L1 I-cache access |
-| `mode` | `chain`：函数间直接跳转链 | chain 模式每步跨页，最大化 ITLB 压力 |
-| `direct_run_len` | chain 模式下连续直接跳转次数 | 同 cold_block_sequence，控制间接跳转频率 |
-| `region_reps` | 外层重复次数 | 线性放大所有计数 |
-
-**sweep 范围**：`funcs = [256,512,1024,2048,4096,8192]`，`lines_per_page = [1,4,8]`
-
-**生成代码示例**（`funcs=1024, lines_per_page=1, mode=chain`）：
-
-```c
-// 每个函数 4096 字节对齐（独占一个 4KB 页）
-// funcs=1024 → 工作集 = 1024 个不同页 → ITLB 工作集 = 1024 页
-
-__attribute__((naked, aligned(4096)))
-static void itlb_func_0(void) {
-    asm volatile(
-        "add x9, x9, #1\n\t"    // payload：计数器递增（防止被优化掉）
-        "eor x10, x10, x9\n\t"  // payload：数据依赖（防止 CPU 消除死代码）
-        ".rept 125\n\t"          // lines_per_page=1 → 执行 1 条 cache line
-        "nop\n\t"                // 1 line = 16 条指令，减去 add/eor/b 共 3 条 = 13 条 nop
-        ".endr\n\t"              // 实际：(1×16 - 2)×4 - 1 = 125 条 nop
-        "b itlb_func_1\n\t"     // chain 模式：直接跳到下一个函数（跨页 → ITLB miss）
-        ::: "x9","x10","cc","memory");
-}
-
-// lines_per_page=4 时，每个函数执行 4 条 cache line：
-// nop 数量 = (4×16 - 2)×4 - 1 = 253 条 nop
-// → 每次访问取指量增加 4 倍 → L1 I-cache access 增加
-
-// chain 模式执行流：
-// itlb_func_0 → itlb_func_1 → ... → itlb_func_1023 → itlb_func_0
-// 每一跳都跨 4KB 页边界 → 每步触发 ITLB lookup
-// funcs 超过 ITLB 容量后 → L1 ITLB refill → L2 ITLB access/refill
-
-for (uint32_t rep = 0; rep < region_reps; rep++) {
-    itlb_func_0();  // 触发整条 1024 步跨页链
-}
+```asm
+ldr x11, [x11]
 ```
 
----
+所以它确实是“分配一片区域，里面放指针，指向区域内另一个地址，然后把起始地址放进 `x11`，持续 pointer chase”。
 
-### `fetch_amplifier`
+## 参数语义
 
-**用途**：补充 L1 I-cache 和 L1 ITLB access 计数，同时可注入固定不跳的 branch 对。
+当前 sweep 参数在 `test/experiment_config.py` 里定义。D-side 现在按更正交的维度组织：工作集大小、每页节点密度、访问模式，以及只在规则访问 pattern 内部生效的 stride。
 
-**核心参数**：
+| 参数 | 当前作用 | 注意 |
+| --- | --- | --- |
+| `size` | I-side code payload 大小，当前 4096 或 8192 | 决定每次 kernel 执行多少个 64B code unit |
+| `ldr_count_per_unit` | 每个 64B code unit 插入多少条 `ldr x11, [x11]` | 这是最直接的 I/D 混合密度参数 |
+| `pages` | D pool 页数，pool bytes = `pages * 4096` | 控制 D 工作集上限 |
+| `nodes_per_page` | 每页选几个 64B line 作为 pointer-chain 节点 | 节点会在 4KB 页内均匀摊开，不再总是取前几个 line |
+| `data_mode` | offset 排序方式 | 现在使用 `linear`、`line_stride`、`page_stride`、`random` |
+| `stride_lines` | 只属于 `line_stride` 模式 | `linear/random/page_stride` 不扫这个参数 |
+| `stride_pages` | 只属于 `page_stride` 模式 | `linear/random/line_stride` 不扫这个参数 |
+| `region_reps` | 重复执行 mixed kernel 的次数 | 不是独立 D 参数，而是跟着 fused instruction kernel 一起放大 |
 
-| 参数 | 说明 | 影响 |
-|------|------|------|
-| `blocks` | 块池总大小 | 决定代码工作集上限 |
-| `block_slots` | 每轮实际访问的槽位数 | 控制热集大小，决定 L1 I-cache 命中/miss 比例 |
-| `direct_run_len` | 连续直接跳转次数 | 同 cold_block_sequence，控制间接跳转频率 |
-| `branch_pairs_per_block` | 每块注入的 branch 对数 | 每对 = `cmp x9,x9` + `b.ne label`，永不跳转但增加 br_retired |
-| `block_slots` | 每块指令槽位总数 | branch 对 + nop 填满剩余槽位，控制每块取指量 |
-| `region_reps` | 外层重复次数 | 线性放大所有计数 |
+`data_mode` 当前推荐四种：
 
-**sweep 范围**：`blocks = [32,64,128]`，`block_slots = [4,8,16]`，`region_reps = [1000]`
+| mode | 排序方式 | 典型含义 |
+| --- | --- | --- |
+| `linear` | 按页、按 line 顺序访问 | 顺序 pointer chain |
+| `line_stride` | 把所有已选节点展平成一维，再按 `stride_lines` 跳 | 显式控制 line/node stride |
+| `page_stride` | 对 page 按 `stride_pages` 跳，每个选中 line index 都跑一遍 | 显式控制跨页/TLB stride |
+| `random` | 全部节点全局 shuffle | 最大程度打乱访问顺序 |
 
-**生成代码示例**（`blocks=64, block_slots=8, direct_run_len=2, branch_pairs_per_block=1`）：
+旧名字仍兼容：`indirect` 会映射到 `random`，`cross_page` 会映射到 `page_stride`，`page_shuffle` 会映射到 `line_shuffle`。新的随机 combo sweep 不再包含 `pages=1`，也不会生成 `line_stride + nodes_per_page=1` 这种明显退化 case。
 
-```c
-// blocks=64，block_slots=8：块池 64 个，每轮只访问前 8 个
-// → 热集 = 8 × 64B = 512B，完全在 L1 I-cache 内
-// → 大量 L1 I-cache access，极少 refill
+也就是说，`stride` 不是全局主轴；它只是 `line_stride/page_stride` 这两个规则访问 pattern 的内部参数，避免把 `access_pattern` 的含义混掉。
 
-// block_slots=8，branch_pairs_per_block=1：
-// 每块 8 个指令槽：1 对 branch（2 条）+ nop 填充（5 条）+ 1 条跳转尾
-__attribute__((naked, aligned(64)))
-static void fetch_block_0(void) {
-    asm volatile(
-        // branch_pairs_per_block=1 → 1 对永不跳转的条件分支
-        "cmp x9, x9\n\t"    // x9 == x9 永远成立，ZF=1
-        "b.ne 1f\n\t"        // b.ne 在 ZF=1 时不跳 → 永不跳转
-        "1:\n\t"
-        // 剩余槽位填 nop：8 slots - 2(branch pair) - 1(tail b) = 5 nop
-        ".rept 5\n\t"
-        "nop\n\t"
-        ".endr\n\t"
-        "b fetch_block_1\n\t"  // direct_run_len=2：每 2 步直接跳，第 2 步改间接
-        ::: "x0","x9","x16","x17","cc","memory");
-}
+## 组合线性判断
 
-// branch_pairs_per_block 越大 → br_retired 越多（但永不 mis-predict）
-// block_slots 越大 → 每块指令越多 → 每次取指跨越更多 cache line
+`run_combo_linearity.py` 会生成 `output/combo_linearity.csv`，并在 benchmark 结束后用 `render_combo_linearity_md.py` 从 CSV 重新生成 `output/combo_linearity.md`。
 
-// direct_run_len=2：fetch_block_1 改为间接调度
-__attribute__((naked, aligned(64)))
-static void fetch_block_1(void) {
-    asm volatile(
-        "cmp x9, x9\n\t"
-        "b.ne 1f\n\t"
-        "1:\n\t"
-        ".rept 3\n\t"
-        "nop\n\t"
-        ".endr\n\t"
-        // (1+1) % 2 == 0 → 间接调度
-        "movz x0, #2\n\t"
-        "b dispatch_fetch_indirect\n\t"
-        ::: "x0","x9","x16","x17","cc","memory");
-}
+每个 combo case 通常包含：
 
-for (uint32_t rep = 0; rep < 1000; rep++) {
-    fetch_block_0();  // 触发 8 槽热链，大量 L1 I-cache access
-}
+- 多条 `single` 行：每个 slot 单独运行的 raw count
+- 一条 `canonical` 行：按原顺序组合运行
+- 一条 `shuffle_...` 行：换顺序组合运行
+- 一条 `sum` 行：把 single raw count 直接求和得到的预测值
+
+判断线性时应比较：
+
+```text
+canonical 或 shuffle 实测值
+vs
+sum 行预测值
 ```
 
----
+当前完整结果的主要观察是：
 
-### `hot_region_loop`
+- `instructions:u` 非常线性。
+- `br_retired:u` 非常线性。
+- `l1d_cache_refill:u` 和 `l1d_tlb_refill:u` 大体线性。
+- `l2d_cache_refill:u` 有一定交互，但多数样本仍可用。
+- `cpu-cycles:u` 不稳定，不适合作为线性 raw vector 的核心维度。
+- `ll_cache_miss:u` 不稳定。
+- I-side refill 类 counter 的相对误差很大，但多数 expected MPKI 极低，不能简单按相对误差判死刑。
 
-**用途**：构造热循环区域，主要用来补 branch 计数和热访问特征。
+推荐线性筛选时加入 MPKI 门槛：
 
-**核心参数**：
-
-| 参数 | 说明 | 影响 |
-|------|------|------|
-| `size` | 热区字节数（必须是 64 的倍数） | 决定热代码工作集，`size/64` 个 cache line 单元 |
-| `branch_pairs_per_unit` | 每个 64B 单元注入的 branch 对数 | 每对 = `cmp x9,x9` + `b.ne label`，永不跳转，线性增加 br_retired |
-| `region_reps` | 外层重复次数 | 线性放大所有计数 |
-
-**sweep 范围**：`size = [4096,8192]`，`branch_pairs_per_unit = [0,1,2,3,4]`，`region_reps = [1000]`
-
-**生成代码示例**（`size=4096, branch_pairs_per_unit=2`）：
-
-```c
-// size=4096 → 64 个 64B cache line 单元，全部在同一个函数内
-// 整个热区 4096B，通常完全驻留在 L1 I-cache 中
-
-__attribute__((naked, aligned(64)))
-static void hot_region_blob(void) {
-    asm volatile(
-        // === cache line 单元 0 ===
-        "add x9, x9, #1\n\t"    // payload：计数器（防止死代码消除）
-        "eor x10, x10, x9\n\t"  // payload：数据依赖链
-        // branch_pairs_per_unit=2 → 2 对永不跳转的条件分支
-        "cmp x9, x9\n\t"        // ZF=1（永远相等）
-        "b.ne 1f\n\t"            // 永不跳转
-        "1:\n\t"
-        "cmp x9, x9\n\t"
-        "b.ne 2f\n\t"            // 永不跳转
-        "2:\n\t"
-        // 剩余槽位填 nop：16 slots - 2(add/eor) - 4(2对branch) = 10 nop
-        ".rept 6\n\t"
-        "nop\n\t"
-        ".endr\n\t"
-
-        // === cache line 单元 1 ===  （结构完全相同，重复 64 次）
-        "add x9, x9, #1\n\t"
-        "eor x10, x10, x9\n\t"
-        "cmp x9, x9\n\t"
-        "b.ne 3f\n\t"
-        "3:\n\t"
-        // ... 共 64 个单元 ...
-
-        "ret\n\t"
-        ::: "x9","x10","cc","memory");
-}
-
-// branch_pairs_per_unit=0 → 每单元只有 add/eor + nop，br_retired 极少
-// branch_pairs_per_unit=4 → 每单元 4 对 branch，br_retired 是 0 时的 4 倍多
-// size 翻倍 → 单元数翻倍 → br_retired/L1 I-cache access 同比翻倍
-
-for (uint32_t rep = 0; rep < 1000; rep++) {
-    hot_region_blob();  // 热循环：全程命中 L1 I-cache，大量 br_retired
-}
+```text
+如果 single-sum expected MPKI < 0.1，则该 counter 在该 combo 上忽略。
 ```
 
----
+这样可以避免把几百、几千级别的低基数噪声放大成“几倍相对误差”。
 
-## 工作流
+## 组合约束
 
+随机组合选择逻辑在 `test/runner.py`。
+
+当前有一个保护：
+
+```python
+if cases and all(is_hot_booster_case(case) for case in cases):
+    continue
 ```
-run_server.py           →  output/combo_linearity.csv  merge-only 单模块+组合/乱序/sum 对比
-test/merge/             →  v2 merge-only fused 模块入口
-fit/combo_codegen.py    →  验证线性叠加假设
-fit/raw_count_sparse_solver.py  →  output/raw_count_sparse_solver_best.json
-fit/validate_fitted_bench.py    →  output/fitted_bench_validation.csv  真机验证
+
+也就是组合不会全部由 hot booster 组成。
+
+不过当前 `combo_linearity` suite 实际只使用 `mixed_region_loop` slots，且 `ldr_count_per_unit` 取值是 `1, 2, 4, 7, 14`，因此没有纯 hot/no-ldr mixed case。
+
+## 地址输出
+
+benchmark 启动后会打印 memory layout。注意：CSV 里不保存 layout，因此由 CSV 重新生成的 `combo_linearity.md` 只包含 count 表，不包含地址快照。
+
+现在 layout 里包含两类行：
+
+```text
+data_region kind=mixed-data name=mixed_region_loop_4 start=0x... end=0x... bytes=... pages=... nodes=... reps=...
+code_region kind=mixed-code name=mixed_region_loop_4 symbol=mixed_region_4_kernel entry=0x... end=0x... bytes=... cache_lines=... ldr_per_unit=... reps=... source=nm+objdump
 ```
 
-### 常用命令
+`data_region` 是真实 data pool 虚拟地址范围。只打印 `reps > 0` 的 active data pool；组合实验里未启用 slot 的占位 pool 不会出现在报告中。
+
+`nodes` 是 pointer-chain 里的节点数，也就是本次 data pool 中会被串起来的 cache-line offset 数量。对 `mixed_region_loop` 来说，通常等于 `pages * lines_per_page`。例如 `pages=128, lines_per_page=4` 时，`nodes=512`。
+
+`code_region entry/end/bytes` 是编译完成后从 ELF 符号大小和 `objdump -d` 反汇编结果回填出来的函数边界。C 运行时仍会先打印入口地址，但 Python runner 会在 `run_one()` 返回前用构建产物重写 `code_region` 行，因此 combo 报告、单模块 Markdown 报告、以及直接跑单模块脚本的 stdout 都使用同一套严格边界。
+
+`cache_lines` 是严格函数字节数按 64B 向上取整后的 footprint，`ldr_per_unit` 是每个 64B instruction unit 中注入的 `ldr x11, [x11]` 条数，`reps` 是每个 benchmark outer iteration 内重复调用该 mixed kernel 的次数。
+
+如果需要手工复核函数边界，可以在构建产物上用：
 
 ```bash
-# 1. 服务器/设备上一键启动：只跑 merge/fused case 的单模块 + 组合/乱序 + sum 对比
+nm -n build/combo_linearity_probe
+objdump -d build/combo_linearity_probe
+```
+
+## Markdown 报告生成
+
+CSV 只能重新生成 count-only 版本；它不含运行时地址快照。默认脚本会把 count-only 报告写到 `combo_linearity_counts.md`，避免覆盖带 layout 的 `combo_linearity.md`。
+
+```bash
+python3 render_combo_linearity_md.py \
+  --csv output/combo_linearity.csv \
+  --out output/combo_linearity_counts.md
+```
+
+默认使用较短的 core raw-count 指标，方便阅读。如果要展开所有 raw count：
+
+```bash
+python3 render_combo_linearity_md.py --metric-set raw
+```
+
+## Fit Target
+
+`fit/raw_count_sparse_solver.py` 现在不再固定旧的 11-D I-side raw 向量。`fit/fitter_config.py` 中的 `raw_vector_metrics="auto"` 会根据 `target` 能推导出的 raw count 自动选择维度：如果 target 只有 branch/I-cache/I-TLB 指标，就保持旧 11 维；如果加入 `l1d_*`、`l2d_*`、`ll_*` 这类 D-cache/D-TLB/LLC 指标，solver 会自动把对应 raw events 纳入线性求解空间。
+
+注意不要用占位数字填 D-side target。应先从 app target 实测得到 `l1d_cache_mpki`、`l1d_cache_refill_mpki`、`l1d_tlb_mpki`、`l1d_tlb_refill_mpki` 等指标，再写入 `fit/fitter_config.py` 的 `target`。
+
+## 常用命令
+
+```bash
+# 跑当前 fused I+D combo 线性实验
+python3 run_combo_linearity.py
+
+# 输出目录默认是 output/
+python3 run_combo_linearity.py --output-dir output
+
+# 服务器/设备封装入口
 python3 run_server.py
-
-# 2. 默认总共 100 组，组合大小 2..7；也可以覆盖
-python3 run_server.py --groups 100 --max-combo-size 7 --shuffle-rounds 1
-
-# 3. （可选）验证线性叠加
-python3 fit/combo_codegen.py
-
-# 4. 运行稀疏求解器
-python3 fit/raw_count_sparse_solver.py
-
-# 5. 指定搜索参数
-python3 fit/raw_count_sparse_solver.py --max-templates 20 --tolerance 0.10 --parallel-workers 128
-
-# 6. 真机验证
-python3 fit/validate_fitted_bench.py --result-json output/raw_count_sparse_solver_best.json
 ```
 
----
+## 关键文件
 
-## 目录结构
-
-```
-config/config.py              运行时配置：设备、hdc、PMU 事件列表
-test/experiment_config.py     merge-only sweep 参数定义
-test/merge/                   instruction+data fused 模块入口
-modules/mixed_region.py       v2 复合模块：64B 指令单元中均匀插入 pointer-chase ldr
-run_server.py                 上传服务器后的一键入口，默认跑 combo_linearity
-fit/combo_codegen.py          随机组合 probe，验证线性性
-fit/raw_count_sparse_solver.py  11 维 raw count 稀疏求解器
-fit/fitter_config.py          求解器配置：目标、阶段权重、家族上限
-fit/validate_fitted_bench.py  整数 repeat plan 回放验证
-output/                       CSV、JSON、日志输出
-```
-
----
-
-## 注意事项
-
-- `miss_rate` 和 `mpki` 不参与线性求解，由最终 raw count 反推。
-- `cpu-cycles:u` 不进入 11 维求解空间，`ipc` 同理。
-- 热模块（`fetch_amplifier`、`hot_region_loop`）的低 MPKI 计数（如极小的 refill）在重复多次时不线性增长，求解器对此有特殊处理。
-
-- Beam search 负责在组合空间中高效筛选 promising 的模板子集，避免暴力枚举。
-  - 每个候选组合都建模为一个混合整数线性规划（MILP）问题：
-    - 变量 $k_i$ 为每个模板的整数 repeat 次数。
-    - 目标函数为加权 L1/L2 距离 Loss，或最大相对误差。
-    - 约束包括：所有维度误差在容差范围内、模板数不超过 max_templates、可选家族/类型限制等。
-  - MILP 求解后直接得到整数 repeat plan，无需再做连续到整数的量化。
-  - 这种方法相比传统 NNLS 或贪心法，能更好地控制稀疏度、误差和实际可用性。
+| 文件 | 作用 |
+| --- | --- |
+| `modules/mixed_region.py` | mixed instruction+data 模板，包含 pointer-chain 初始化和 `ldr x11, [x11]` 注入 |
+| `pipeline.py` | 生成最终 C benchmark，包括 slot、主循环、memory/code layout 输出 |
+| `test/experiment_config.py` | 当前 sweep 和 combo suite 参数 |
+| `test/runner.py` | 单 case、combo、shuffle、sum 行生成逻辑 |
+| `run_combo_linearity.py` | 当前 combo 线性实验入口 |
+| `render_combo_linearity_md.py` | 从 `combo_linearity.csv` 重新生成可读 Markdown count 报告 |
+| `output/combo_linearity.csv` | raw count 结果 |
+| `output/combo_linearity.md` | 由 CSV 生成的每个 combo 可读 count 报告 |

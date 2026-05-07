@@ -23,6 +23,10 @@ FIT_CONFIG = {
     ],
     "outer_iters": 1000,
     "fit_total_instructions": 100_000_000,
+    # "auto" means the sparse solver uses exactly the raw counters that can be
+    # derived from target. Add D-cache / D-TLB target metrics below and the
+    # raw solver will automatically widen beyond the old I-side-only space.
+    "raw_vector_metrics": "auto",
  
     "stable_low_mpki_threshold": 1.0,
 
@@ -52,5 +56,23 @@ FIT_CONFIG = {
         "l2i_tlb_miss_rate": 0.161292,
         "l2i_tlb_mpki": 1.8460,
         "l2i_tlb_refill_mpki": 0.2980,
+
+        # D-side target slots. Keep them commented until the app target values
+        # are measured; the solver will include any of these once present.
+        # "l1d_miss_rate": ...,
+        # "l1d_cache_mpki": ...,
+        # "l1d_cache_refill_mpki": ...,
+        # "l1d_tlb_miss_rate": ...,
+        # "l1d_tlb_mpki": ...,
+        # "l1d_tlb_refill_mpki": ...,
+        # "l2d_miss_rate": ...,
+        # "l2d_cache_mpki": ...,
+        # "l2d_cache_refill_mpki": ...,
+        # "l2d_tlb_miss_rate": ...,
+        # "l2d_tlb_mpki": ...,
+        # "l2d_tlb_refill_mpki": ...,
+        # "ll_miss_rate": ...,
+        # "ll_cache_mpki": ...,
+        # "ll_cache_miss_mpki": ...,
     },
 }

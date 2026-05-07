@@ -116,7 +116,25 @@ def parse_args() -> argparse.Namespace:
         "--mixed-region-lines-per-page",
         type=int,
         default=8,
-        help="How many 64B pointer nodes to place on each mixed-region page",
+        help="Legacy alias for --mixed-region-nodes-per-page",
+    )
+    parser.add_argument(
+        "--mixed-region-nodes-per-page",
+        type=int,
+        default=None,
+        help="How many evenly spaced 64B pointer nodes to place on each mixed-region page",
+    )
+    parser.add_argument(
+        "--mixed-region-stride-lines",
+        type=int,
+        default=1,
+        help="Cycle stride through selected data nodes for mixed-region line_stride mode",
+    )
+    parser.add_argument(
+        "--mixed-region-stride-pages",
+        type=int,
+        default=1,
+        help="Cycle stride through pages for mixed-region page_stride mode",
     )
     parser.add_argument(
         "--mixed-region-region-reps",
@@ -500,6 +518,45 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
         )
         for kind, name, base, bytes_macro, pages_macro, nodes_macro, reps_macro in regions
     )
+    code_regions = []
+    for slot in mixed_region_slots:
+        if slot["size"] <= 0 or slot["pages"] <= 0:
+            continue
+        slot_id = slot["slot_id"]
+        if slot_id == 0:
+            code_regions.append(
+                (
+                    "mixed-code",
+                    "mixed_region_loop",
+                    "mixed_region_kernel",
+                    "CONFIG_MIXED_REGION_SIZE",
+                    "CONFIG_MIXED_REGION_LDR_COUNT_PER_UNIT",
+                    "CONFIG_MIXED_REGION_REPS",
+                )
+            )
+            continue
+        code_regions.append(
+            (
+                "mixed-code",
+                f"mixed_region_loop_{slot_id}",
+                f"mixed_region_{slot_id}_kernel",
+                f"CONFIG_MIXED_REGION_{slot_id}_SIZE",
+                f"CONFIG_MIXED_REGION_{slot_id}_LDR_COUNT_PER_UNIT",
+                f"CONFIG_MIXED_REGION_{slot_id}_REPS",
+            )
+        )
+
+    code_entries = "".join(
+        (
+            f'        {{"{kind}", "{name}", "{entry}", (const void *)(uintptr_t)&{entry}, '
+            f"(uint64_t)({bytes_macro}), "
+            f"(uint64_t)(({bytes_macro}) / 64u), "
+            f"(uint64_t)({ldr_macro}), (uint64_t)({reps_macro})}},\n"
+        )
+        for kind, name, entry, bytes_macro, ldr_macro, reps_macro in code_regions
+    )
+    if not code_entries:
+        code_entries = '        {"code", "none", "none", NULL, 0u, 0u, 0u, 0u},\n'
 
     return (
         "typedef struct memory_region_info {\n"
@@ -511,6 +568,16 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
         "    uint64_t nodes;\n"
         "    uint64_t reps;\n"
         "} memory_region_info_t;\n\n"
+        "typedef struct code_region_info {\n"
+        "    const char *kind;\n"
+        "    const char *name;\n"
+        "    const char *symbol;\n"
+        "    const void *entry;\n"
+        "    uint64_t payload_bytes;\n"
+        "    uint64_t cache_lines;\n"
+        "    uint64_t ldr_per_unit;\n"
+        "    uint64_t reps;\n"
+        "} code_region_info_t;\n\n"
         "static int compare_memory_region_info(const void *lhs, const void *rhs) {\n"
         "    const memory_region_info_t *left = (const memory_region_info_t *)lhs;\n"
         "    const memory_region_info_t *right = (const memory_region_info_t *)rhs;\n"
@@ -518,31 +585,38 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
         "    uintptr_t right_addr = (uintptr_t)right->base;\n"
         "    return (left_addr > right_addr) - (left_addr < right_addr);\n"
         "}\n\n"
+        "static int compare_code_region_info(const void *lhs, const void *rhs) {\n"
+        "    const code_region_info_t *left = (const code_region_info_t *)lhs;\n"
+        "    const code_region_info_t *right = (const code_region_info_t *)rhs;\n"
+        "    uintptr_t left_addr = (uintptr_t)left->entry;\n"
+        "    uintptr_t right_addr = (uintptr_t)right->entry;\n"
+        "    return (left_addr > right_addr) - (left_addr < right_addr);\n"
+        "}\n\n"
         "static void print_memory_layout(uint64_t iters) {\n"
         "    memory_region_info_t regions[] = {\n"
         f"{entries}"
         "    };\n"
+        "    code_region_info_t code_regions[] = {\n"
+        f"{code_entries}"
+        "    };\n"
         "    const size_t region_count = sizeof(regions) / sizeof(regions[0]);\n"
+        "    const size_t code_region_count = sizeof(code_regions) / sizeof(code_regions[0]);\n"
         "    qsort(regions, region_count, sizeof(regions[0]), compare_memory_region_info);\n"
+        "    qsort(code_regions, code_region_count, sizeof(code_regions[0]), compare_code_region_info);\n"
         "    uint64_t total_data_bytes = 0;\n"
         "    size_t active_regions = 0;\n"
         "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
-        "        if (regions[idx].bytes == 0) continue;\n"
+        "        if (regions[idx].bytes == 0 || regions[idx].reps == 0) continue;\n"
         "        total_data_bytes += regions[idx].bytes;\n"
         "        ++active_regions;\n"
         "    }\n"
         "    puts(\"===== memory layout =====\");\n"
         "    printf(\"iters=%\" PRIu64 \" active_data_regions=%zu total_data_bytes=%\" PRIu64 \"\\n\", iters, active_regions, total_data_bytes);\n"
-        "    uintptr_t previous_end = 0;\n"
         "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
-        "        if (regions[idx].bytes == 0) continue;\n"
+        "        if (regions[idx].bytes == 0 || regions[idx].reps == 0) continue;\n"
         "        uintptr_t start = (uintptr_t)regions[idx].base;\n"
         "        uintptr_t end = start + (uintptr_t)regions[idx].bytes;\n"
-        "        uint64_t gap_before = 0;\n"
-        "        if (previous_end != 0 && start > previous_end) {\n"
-        "            gap_before = (uint64_t)(start - previous_end);\n"
-        "        }\n"
-        "        printf(\"data_region kind=%s name=%s start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" bytes=%\" PRIu64 \" pages=%\" PRIu64 \" nodes=%\" PRIu64 \" reps=%\" PRIu64 \" gap_before=%\" PRIu64 \"\\n\",\n"
+        "        printf(\"data_region kind=%s name=%s start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" bytes=%\" PRIu64 \" pages=%\" PRIu64 \" nodes=%\" PRIu64 \" reps=%\" PRIu64 \"\\n\",\n"
         "               regions[idx].kind,\n"
         "               regions[idx].name,\n"
         "               start,\n"
@@ -550,9 +624,22 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
         "               regions[idx].bytes,\n"
         "               regions[idx].pages,\n"
         "               regions[idx].nodes,\n"
-        "               regions[idx].reps,\n"
-        "               gap_before);\n"
-        "        if (end > previous_end) previous_end = end;\n"
+        "               regions[idx].reps);\n"
+        "    }\n"
+        "    for (size_t idx = 0; idx < code_region_count; ++idx) {\n"
+        "        if (code_regions[idx].payload_bytes == 0) continue;\n"
+        "        uintptr_t entry = (uintptr_t)code_regions[idx].entry;\n"
+        "        uintptr_t approx_end = entry + (uintptr_t)code_regions[idx].payload_bytes;\n"
+        "        printf(\"code_region kind=%s name=%s symbol=%s entry=0x%\" PRIxPTR \" approx_payload_end=0x%\" PRIxPTR \" payload_bytes=%\" PRIu64 \" cache_lines=%\" PRIu64 \" ldr_per_unit=%\" PRIu64 \" reps=%\" PRIu64 \"\\n\",\n"
+        "               code_regions[idx].kind,\n"
+        "               code_regions[idx].name,\n"
+        "               code_regions[idx].symbol,\n"
+        "               entry,\n"
+        "               approx_end,\n"
+        "               code_regions[idx].payload_bytes,\n"
+        "               code_regions[idx].cache_lines,\n"
+        "               code_regions[idx].ldr_per_unit,\n"
+        "               code_regions[idx].reps);\n"
         "    }\n"
         "    fflush(stdout);\n"
         "}\n\n"
@@ -665,7 +752,13 @@ def generate(args: argparse.Namespace) -> str:
     )
     mixed_region_data_mode = MIXED_REGION.normalize_data_mode(args.mixed_region_data_mode)
     mixed_region_pages = MIXED_REGION.normalize_pages(args.mixed_region_pages)
-    mixed_region_lines_per_page = MIXED_REGION.normalize_lines_per_page(args.mixed_region_lines_per_page)
+    mixed_region_nodes_per_page = MIXED_REGION.normalize_nodes_per_page(
+        args.mixed_region_lines_per_page
+        if args.mixed_region_nodes_per_page is None
+        else args.mixed_region_nodes_per_page
+    )
+    mixed_region_stride_lines = MIXED_REGION.normalize_stride(args.mixed_region_stride_lines)
+    mixed_region_stride_pages = MIXED_REGION.normalize_stride(args.mixed_region_stride_pages)
     mixed_region_region_reps = (
         0
         if mixed_region_size == 0 or mixed_region_pages == 0
@@ -681,7 +774,10 @@ def generate(args: argparse.Namespace) -> str:
             "ldr_count_per_unit": mixed_region_ldr_count_per_unit,
             "data_mode": mixed_region_data_mode,
             "pages": mixed_region_pages,
-            "lines_per_page": mixed_region_lines_per_page,
+            "lines_per_page": mixed_region_nodes_per_page,
+            "nodes_per_page": mixed_region_nodes_per_page,
+            "stride_lines": mixed_region_stride_lines,
+            "stride_pages": mixed_region_stride_pages,
             "region_reps": mixed_region_region_reps,
             "pos": mixed_region_pos,
         }
@@ -691,7 +787,11 @@ def generate(args: argparse.Namespace) -> str:
         slot_ldr_count = MIXED_REGION.normalize_ldr_count_per_unit(raw_slot.get("ldr_count_per_unit", 0))
         slot_data_mode = MIXED_REGION.normalize_data_mode(raw_slot.get("data_mode", "linear"))
         slot_pages = MIXED_REGION.normalize_pages(raw_slot.get("pages", 1))
-        slot_lines_per_page = MIXED_REGION.normalize_lines_per_page(raw_slot.get("lines_per_page", 8))
+        slot_nodes_per_page = MIXED_REGION.normalize_nodes_per_page(
+            raw_slot.get("nodes_per_page", raw_slot.get("lines_per_page", 8))
+        )
+        slot_stride_lines = MIXED_REGION.normalize_stride(raw_slot.get("stride_lines", 1))
+        slot_stride_pages = MIXED_REGION.normalize_stride(raw_slot.get("stride_pages", 1))
         slot_region_reps = 0 if slot_size == 0 or slot_pages == 0 else max(1, raw_slot.get("region_reps", 0))
         mixed_region_slots.append(
             {
@@ -702,7 +802,10 @@ def generate(args: argparse.Namespace) -> str:
                 "ldr_count_per_unit": slot_ldr_count,
                 "data_mode": slot_data_mode,
                 "pages": slot_pages,
-                "lines_per_page": slot_lines_per_page,
+                "lines_per_page": slot_nodes_per_page,
+                "nodes_per_page": slot_nodes_per_page,
+                "stride_lines": slot_stride_lines,
+                "stride_pages": slot_stride_pages,
                 "region_reps": slot_region_reps,
                 "pos": raw_slot.get("pos", mixed_region_pos + slot_id),
             }
@@ -871,9 +974,12 @@ def generate(args: argparse.Namespace) -> str:
     data_tlb_indirect_pool_bytes = data_tlb_indirect_pages * 4096
     mixed_region_offsets = MIXED_REGION.build_pointer_offsets(
         mixed_region_pages,
-        mixed_region_lines_per_page,
+        mixed_region_nodes_per_page,
         mixed_region_data_mode,
         args.seed ^ 0xB5297A4D,
+        stride_lines=mixed_region_stride_lines,
+        stride_pages=mixed_region_stride_pages,
+        nodes_per_page=mixed_region_nodes_per_page,
     )
     mixed_region_node_count = len(mixed_region_offsets)
     mixed_region_pool_bytes = mixed_region_pages * 4096
@@ -881,9 +987,12 @@ def generate(args: argparse.Namespace) -> str:
     for slot in mixed_region_slots[1:]:
         slot["offsets"] = MIXED_REGION.build_pointer_offsets(
             slot["pages"],
-            slot["lines_per_page"],
+            slot["nodes_per_page"],
             slot["data_mode"],
             args.seed ^ 0xB5297A4D ^ (slot["slot_id"] * 0x45D9F3B),
+            stride_lines=slot["stride_lines"],
+            stride_pages=slot["stride_pages"],
+            nodes_per_page=slot["nodes_per_page"],
         )
         slot["node_count"] = len(slot["offsets"])
         slot["pool_bytes"] = slot["pages"] * 4096
@@ -1089,7 +1198,10 @@ def generate(args: argparse.Namespace) -> str:
     out.append(f"#define CONFIG_MIXED_REGION_SIZE {mixed_region_size}u\n")
     out.append(f"#define CONFIG_MIXED_REGION_LDR_COUNT_PER_UNIT {mixed_region_ldr_count_per_unit}u\n")
     out.append(f"#define CONFIG_MIXED_REGION_PAGE_COUNT {mixed_region_pages}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_LINES_PER_PAGE {mixed_region_lines_per_page}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_NODES_PER_PAGE {mixed_region_nodes_per_page}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_LINES_PER_PAGE {mixed_region_nodes_per_page}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_STRIDE_LINES {mixed_region_stride_lines}u\n")
+    out.append(f"#define CONFIG_MIXED_REGION_STRIDE_PAGES {mixed_region_stride_pages}u\n")
     out.append(f"#define CONFIG_MIXED_REGION_NODE_COUNT {mixed_region_node_count}u\n")
     out.append(f"#define CONFIG_MIXED_REGION_POOL_BYTES {mixed_region_pool_bytes}u\n")
     out.append(f"#define CONFIG_MIXED_REGION_REPS {mixed_region_region_reps}u\n")
@@ -1100,7 +1212,10 @@ def generate(args: argparse.Namespace) -> str:
         out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_SIZE {slot['size']}u\n")
         out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LDR_COUNT_PER_UNIT {slot['ldr_count_per_unit']}u\n")
         out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_PAGE_COUNT {slot['pages']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LINES_PER_PAGE {slot['lines_per_page']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_NODES_PER_PAGE {slot['nodes_per_page']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LINES_PER_PAGE {slot['nodes_per_page']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_STRIDE_LINES {slot['stride_lines']}u\n")
+        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_STRIDE_PAGES {slot['stride_pages']}u\n")
         out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_NODE_COUNT {slot['node_count']}u\n")
         out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES {slot['pool_bytes']}u\n")
         out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_REPS {slot['region_reps']}u\n")
@@ -1298,7 +1413,6 @@ def generate(args: argparse.Namespace) -> str:
         "static void *g_indirect_target_table[CONFIG_INDIRECT_TARGET_COUNT > 0 ? CONFIG_INDIRECT_TARGET_COUNT : 1u];\n\n"
     )
     out.append(emit_memory_region_allocator())
-    out.append(emit_memory_layout_printer(mixed_region_slots))
 
     out.append(
         '__attribute__((used, noinline))\n'
@@ -1547,6 +1661,8 @@ def generate(args: argparse.Namespace) -> str:
             out.append(f"    {slot['prefix']}_kernel();\n")
         out.append("}\n\n")
 
+    out.append(emit_memory_layout_printer(mixed_region_slots))
+
     out.append("__attribute__((used, noinline))\n")
     out.append("static void run_fetch_amplifier_once(void) {\n")
     if fetch_total_blocks > 0:
@@ -1790,6 +1906,14 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
             "data_mode": str(cfg.get(f"mixed_region_loop_{slot_id}_data_mode", "linear")),
             "pages": int(cfg.get(f"mixed_region_loop_{slot_id}_pages", 1)),
             "lines_per_page": int(cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8)),
+            "nodes_per_page": int(
+                cfg.get(
+                    f"mixed_region_loop_{slot_id}_nodes_per_page",
+                    cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8),
+                )
+            ),
+            "stride_lines": int(cfg.get(f"mixed_region_loop_{slot_id}_stride_lines", 1)),
+            "stride_pages": int(cfg.get(f"mixed_region_loop_{slot_id}_stride_pages", 1)),
             "region_reps": int(cfg.get(f"mixed_region_loop_{slot_id}_region_reps", 0)),
             "pos": int(cfg.get(f"mixed_region_loop_{slot_id}_pos", 2 + slot_id)),
         }
@@ -1823,6 +1947,11 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         mixed_region_data_mode=str(cfg.get("mixed_region_loop_data_mode", "linear")),
         mixed_region_pages=int(cfg.get("mixed_region_loop_pages", 1)),
         mixed_region_lines_per_page=int(cfg.get("mixed_region_loop_lines_per_page", 8)),
+        mixed_region_nodes_per_page=int(
+            cfg.get("mixed_region_loop_nodes_per_page", cfg.get("mixed_region_loop_lines_per_page", 8))
+        ),
+        mixed_region_stride_lines=int(cfg.get("mixed_region_loop_stride_lines", 1)),
+        mixed_region_stride_pages=int(cfg.get("mixed_region_loop_stride_pages", 1)),
         mixed_region_region_reps=int(cfg.get("mixed_region_loop_region_reps", 0)),
         mixed_region_pos=int(cfg.get("mixed_region_loop_pos", 2)),
         mixed_region_extra_slots=mixed_region_extra_slots,

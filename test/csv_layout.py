@@ -24,9 +24,13 @@ LAYOUT_TAGS = {
 
 MIXED_MODE_TAGS = {
     "linear": "lin",
-    "page_shuffle": "pshuf",
-    "cross_page": "xpage",
-    "indirect": "indir",
+    "line_stride": "lstr",
+    "page_stride": "pstr",
+    "line_shuffle": "lshuf",
+    "random": "rand",
+    "page_shuffle": "lshuf",
+    "cross_page": "pstr",
+    "indirect": "rand",
 }
 
 
@@ -78,12 +82,17 @@ def format_case_label(module_name, params, fallback_label):
             )
         if module_name == "mixed_region_loop" or module_name.startswith("mixed_region_loop_"):
             mode = MIXED_MODE_TAGS.get(params["data_mode"], params["data_mode"])
-            return (
+            nodes_per_page = params.get("nodes_per_page", params.get("lines_per_page", 1))
+            label = (
                 f"mix_b{_blocks_from_size(params['size'])}"
                 f"_ld{params['ldr_count_per_unit']}_{mode}"
-                f"_p{params['pages']}_lp{params['lines_per_page']}"
-                f"_r{params['region_reps']}"
+                f"_p{params['pages']}_np{nodes_per_page}"
             )
+            if params["data_mode"] == "line_stride":
+                label += f"_sl{params.get('stride_lines', 1)}"
+            if params["data_mode"] == "page_stride":
+                label += f"_sp{params.get('stride_pages', 1)}"
+            return f"{label}_r{params['region_reps']}"
         if module_name == "data_stream":
             return f"dstream_s{params['size']}_st{params['stride']}_r{params['region_reps']}"
         if module_name == "data_pointer_chase":

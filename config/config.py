@@ -66,7 +66,7 @@ DERIVED_KEYS = [
 MIXED_REGION_SLOT_COUNT = 7
 
 
-ACTIVE_PROFILE = "ohos"
+ACTIVE_PROFILE = "linux"
 
 
 # Edit only this value to switch environments.
@@ -267,6 +267,9 @@ def build_base_cfg():
         "data_mode": "linear",
         "pages": 1,
         "lines_per_page": 8,
+        "nodes_per_page": 8,
+        "stride_lines": 1,
+        "stride_pages": 1,
         "region_reps": 0,
         "pos": 2,
     }
@@ -357,7 +360,7 @@ def build_base_cfg():
             "opt_level": 0,
         },
         "run": {
-            "iters": 1000,
+            "iters": 100,
             "rounds": 1,
             "cpu_core": 0,
         },
@@ -399,6 +402,12 @@ def flatten_cfg(cfg):
         "mixed_region_loop_data_mode": modules["mixed_region_loop"]["data_mode"],
         "mixed_region_loop_pages": modules["mixed_region_loop"]["pages"],
         "mixed_region_loop_lines_per_page": modules["mixed_region_loop"]["lines_per_page"],
+        "mixed_region_loop_nodes_per_page": modules["mixed_region_loop"].get(
+            "nodes_per_page",
+            modules["mixed_region_loop"]["lines_per_page"],
+        ),
+        "mixed_region_loop_stride_lines": modules["mixed_region_loop"].get("stride_lines", 1),
+        "mixed_region_loop_stride_pages": modules["mixed_region_loop"].get("stride_pages", 1),
         "mixed_region_loop_region_reps": modules["mixed_region_loop"]["region_reps"],
         "mixed_region_loop_pos": modules["mixed_region_loop"]["pos"],
         **{
@@ -414,6 +423,18 @@ def flatten_cfg(cfg):
                 f"mixed_region_loop_{slot_id}_lines_per_page": modules[f"mixed_region_loop_{slot_id}"][
                     "lines_per_page"
                 ],
+                f"mixed_region_loop_{slot_id}_nodes_per_page": modules[f"mixed_region_loop_{slot_id}"].get(
+                    "nodes_per_page",
+                    modules[f"mixed_region_loop_{slot_id}"]["lines_per_page"],
+                ),
+                f"mixed_region_loop_{slot_id}_stride_lines": modules[f"mixed_region_loop_{slot_id}"].get(
+                    "stride_lines",
+                    1,
+                ),
+                f"mixed_region_loop_{slot_id}_stride_pages": modules[f"mixed_region_loop_{slot_id}"].get(
+                    "stride_pages",
+                    1,
+                ),
                 f"mixed_region_loop_{slot_id}_region_reps": modules[f"mixed_region_loop_{slot_id}"]["region_reps"],
                 f"mixed_region_loop_{slot_id}_pos": modules[f"mixed_region_loop_{slot_id}"]["pos"],
             }.items()
@@ -495,6 +516,9 @@ def zero_all_modules(cfg):
         mixed_region_loop["data_mode"] = "linear"
         mixed_region_loop["pages"] = 1
         mixed_region_loop["lines_per_page"] = 8
+        mixed_region_loop["nodes_per_page"] = 8
+        mixed_region_loop["stride_lines"] = 1
+        mixed_region_loop["stride_pages"] = 1
         mixed_region_loop["region_reps"] = 0
 
     data_stream = cfg["modules"]["data_stream"]

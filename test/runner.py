@@ -17,18 +17,29 @@ else:
 
 CSV_PREFIX = ["suite", "case", "order_tag", "modules"]
 HOT_BOOSTER_MODULES = {"hot_region_loop", "fetch_amplifier", "data_hot_stride"}
-REPORT_METRICS = [
-    "instructions:u",
+COUNT_METRICS = [
     "cpu-cycles:u",
+    "instructions:u",
+    "br_retired:u",
+    "br_mis_pred:u",
+    "l1i_cache:u",
     "l1i_cache_refill:u",
+    "l1i_tlb:u",
     "l1i_tlb_refill:u",
+    "l2i_cache:u",
+    "l2i_cache_refill:u",
+    "l2i_tlb:u",
+    "l2i_tlb_refill:u",
+    "l1d_cache:u",
     "l1d_cache_refill:u",
+    "l1d_tlb:u",
     "l1d_tlb_refill:u",
-    "ipc",
-    "l1i_cache_refill_mpki",
-    "l1i_tlb_refill_mpki",
-    "l1d_cache_refill_mpki",
-    "l1d_tlb_refill_mpki",
+    "l2d_cache:u",
+    "l2d_cache_refill:u",
+    "l2d_tlb:u",
+    "l2d_tlb_refill:u",
+    "ll_cache:u",
+    "ll_cache_miss:u",
 ]
 
 
@@ -81,24 +92,104 @@ def format_metric_value(value):
     return str(value)
 
 
+def format_ascii_table(headers, rows, indent="    "):
+    if not rows:
+        return f"{indent}_none_\n"
+
+    table = [[format_metric_value(cell) for cell in row] for row in rows]
+    widths = [
+        max(len(str(headers[col])), *(len(row[col]) for row in table))
+        for col in range(len(headers))
+    ]
+
+    def render_row(row):
+        return indent + " | ".join(str(row[col]).ljust(widths[col]) for col in range(len(headers)))
+
+    separator = indent + "-+-".join("-" * width for width in widths)
+    lines = [render_row(headers), separator]
+    lines.extend(render_row(row) for row in table)
+    return "\n".join(lines) + "\n"
+
+
+def combined_sort_key(row):
+    tag = row.get("order_tag", "")
+    if tag == "canonical":
+        return (0, tag)
+    if tag.startswith("shuffle_"):
+        return (1, tag)
+    if tag == "sum":
+        return (2, tag)
+    return (3, tag)
+
+
+def display_order_tags(rows):
+    shuffle_count = 0
+    shuffle_total = sum(1 for row in rows if row.get("order_tag", "").startswith("shuffle_"))
+    labels = {}
+    for row in rows:
+        tag = row.get("order_tag", "")
+        if tag.startswith("shuffle_"):
+            shuffle_count += 1
+            labels[id(row)] = "shuffle" if shuffle_total == 1 else f"shuffle_{shuffle_count}"
+        else:
+            labels[id(row)] = tag
+    return labels
+
+
 def format_result_table(rows):
-    metrics = [metric for metric in REPORT_METRICS if any(row.get(metric) not in ("", None) for row in rows)]
+    metrics = [metric for metric in COUNT_METRICS if any(row.get(metric) not in ("", None) for row in rows)]
     if not metrics:
         return "_No metrics captured._\n"
 
-    header = ["order", "modules", *metrics]
-    lines = [
-        "| " + " | ".join(header) + " |",
-        "| " + " | ".join("---" for _ in header) + " |",
-    ]
-    for row in rows:
-        values = [
-            str(row.get("order_tag", "")),
-            str(row.get("modules", "")),
-            *[format_metric_value(row.get(metric)) for metric in metrics],
-        ]
-        lines.append("| " + " | ".join(values) + " |")
-    return "\n".join(lines) + "\n"
+    singles = [row for row in rows if row.get("order_tag") == "single"]
+    combined = sorted(
+        [
+            row
+            for row in rows
+            if row.get("order_tag") == "canonical"
+            or row.get("order_tag") == "sum"
+            or row.get("order_tag", "").startswith("shuffle_")
+        ],
+        key=combined_sort_key,
+    )
+
+    parts = []
+    if singles:
+        single_ids = [f"s{idx}" for idx, _ in enumerate(singles)]
+        parts.extend(
+            [
+                "single_modules:\n",
+                format_ascii_table(
+                    ["id", "module"],
+                    [[single_id, row.get("modules", "")] for single_id, row in zip(single_ids, singles)],
+                ),
+                "single_counts:\n",
+                format_ascii_table(
+                    ["metric", *single_ids],
+                    [[metric, *[row.get(metric, "") for row in singles]] for metric in metrics],
+                ),
+            ]
+        )
+
+    if combined:
+        order_labels = display_order_tags(combined)
+        combined_ids = [order_labels[id(row)] for row in combined]
+        parts.extend(
+            [
+                "combined_orders:\n",
+                format_ascii_table(
+                    ["id", "modules"],
+                    [[combined_id, row.get("modules", "")] for combined_id, row in zip(combined_ids, combined)],
+                ),
+                "combined_counts:\n",
+                format_ascii_table(
+                    ["metric", *combined_ids],
+                    [[metric, *[row.get(metric, "") for row in combined]] for metric in metrics],
+                ),
+            ]
+        )
+
+    return "".join(parts)
 
 
 def extract_memory_layout_blocks(raw_output):
@@ -114,7 +205,7 @@ def extract_memory_layout_blocks(raw_output):
             continue
         if not capturing:
             continue
-        if line.startswith("iters=") or line.startswith("data_region "):
+        if line.startswith("iters=") or line.startswith("data_region ") or line.startswith("code_region "):
             current.append(line)
             continue
         blocks.append(current)

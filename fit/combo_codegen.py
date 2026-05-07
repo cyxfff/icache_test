@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-if __package__ in (None, ""):
+if __package__ in (None, "", "fit"):
     from modules.manager import SynthesisModuleManager
 else:
-    from .modules.manager import SynthesisModuleManager
+    from ..modules.manager import SynthesisModuleManager
 
 
 MODULES = SynthesisModuleManager()

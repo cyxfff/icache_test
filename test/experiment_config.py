@@ -35,38 +35,59 @@ def alias_cases(cases, module_name, label_prefix):
 # a code region with evenly spaced pointer-chasing ldr instructions.
 MIXED_REGION_LOOP_SIZES = [4096, 8192]
 MIXED_REGION_LOOP_LDR_COUNTS = [1, 2, 4, 7, 14]
-MIXED_REGION_LOOP_MODES = [
-    ("linear", "lin"),
-    ("page_shuffle", "pshuf"),
-    ("cross_page", "xpage"),
-    ("indirect", "indir"),
+MIXED_REGION_LOOP_DATA_PATTERNS = [
+    ("linear", "lin", {}),
+    ("line_stride", "lstr5", {"stride_lines": 5}),
+    ("page_stride", "pstr17", {"stride_pages": 17}),
+    ("random", "rand", {}),
 ]
 MIXED_REGION_LOOP_MAX_DATA_BYTES = 2 * 1024 * 1024 * 1024
 MIXED_REGION_LOOP_MAX_PAGES = MIXED_REGION_LOOP_MAX_DATA_BYTES // 4096
-MIXED_REGION_LOOP_PAGES = [1, 128, 512, MIXED_REGION_LOOP_MAX_PAGES]
-MIXED_REGION_LOOP_LINES_PER_PAGE = [1, 4]
-MIXED_REGION_LOOP_REGION_REPS = [1000]
+MIXED_REGION_LOOP_PAGES = [128, 512, MIXED_REGION_LOOP_MAX_PAGES]
+MIXED_REGION_LOOP_NODES_PER_PAGE = [1, 4]
+MIXED_REGION_LOOP_REGION_REPS = [100]
+
+
+def make_mixed_region_loop_cases():
+    cases = []
+    for size in MIXED_REGION_LOOP_SIZES:
+        for ldr_count in MIXED_REGION_LOOP_LDR_COUNTS:
+            for mode_name, mode_tag, pattern_params in MIXED_REGION_LOOP_DATA_PATTERNS:
+                for pages in MIXED_REGION_LOOP_PAGES:
+                    for nodes_per_page in MIXED_REGION_LOOP_NODES_PER_PAGE:
+                        if mode_name == "line_stride" and nodes_per_page <= 1:
+                            continue
+                        for region_reps in MIXED_REGION_LOOP_REGION_REPS:
+                            suffix = f"p{pages}_np{nodes_per_page}"
+                            if "stride_lines" in pattern_params:
+                                suffix += f"_sl{pattern_params['stride_lines']}"
+                            if "stride_pages" in pattern_params:
+                                suffix += f"_sp{pattern_params['stride_pages']}"
+                            params = {
+                                "size": size,
+                                "ldr_count_per_unit": ldr_count,
+                                "data_mode": mode_name,
+                                "pages": pages,
+                                "nodes_per_page": nodes_per_page,
+                                "lines_per_page": nodes_per_page,
+                                "region_reps": region_reps,
+                            }
+                            params.update(pattern_params)
+                            cases.append(
+                                make_case(
+                                    (
+                                        f"mix_s{size}_l{ldr_count}_{mode_tag}"
+                                        f"_{suffix}_r{region_reps}"
+                                    ),
+                                    "mixed_region_loop",
+                                    **params,
+                                )
+                            )
+    return cases
 
 
 MERGE_MODULE_CASE_GROUPS = {
-    "mixed_region_loop": [
-        make_case(
-            f"mix_s{size}_l{ldr_count}_m{mode_tag}_p{pages}_lp{lines_per_page}_r{region_reps}",
-            "mixed_region_loop",
-            size=size,
-            ldr_count_per_unit=ldr_count,
-            data_mode=mode_name,
-            pages=pages,
-            lines_per_page=lines_per_page,
-            region_reps=region_reps,
-        )
-        for size in MIXED_REGION_LOOP_SIZES
-        for ldr_count in MIXED_REGION_LOOP_LDR_COUNTS
-        for mode_name, mode_tag in MIXED_REGION_LOOP_MODES
-        for pages in MIXED_REGION_LOOP_PAGES
-        for lines_per_page in MIXED_REGION_LOOP_LINES_PER_PAGE
-        for region_reps in MIXED_REGION_LOOP_REGION_REPS
-    ],
+    "mixed_region_loop": make_mixed_region_loop_cases(),
 }
 
 
@@ -108,7 +129,7 @@ RANDOM_COMBO_SUITE = {
     "csv_name": "combo_linearity.csv",
     "module_case_groups": COMBO_MODULE_CASE_GROUPS,
     "combo_sizes": [2, 3, 4, 5, 6, 7],
-    "total_groups": 100,
+    "total_groups": 1,
     "shuffle_rounds": 1,
 }
 

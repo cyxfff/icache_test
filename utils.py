@@ -283,6 +283,185 @@ def compile_bin(
         print(completed.stderr, end="", file=sys.stderr)
 
 
+CODE_REGION_RE = re.compile(
+    r"^code_region kind=(?P<kind>\S+) name=(?P<name>\S+)"
+    r"(?: symbol=(?P<symbol>\S+))?"
+    r" entry=0x(?P<entry>[0-9a-fA-F]+)"
+    r" approx_payload_end=0x(?P<approx_end>[0-9a-fA-F]+)"
+    r" payload_bytes=(?P<payload_bytes>\d+)"
+    r" cache_lines=(?P<cache_lines>\d+)"
+    r" ldr_per_unit=(?P<ldr_per_unit>\d+)"
+    r" reps=(?P<reps>\d+)$"
+)
+OBJDUMP_FUNC_RE = re.compile(r"^([0-9a-fA-F]+) <([^>]+)>:$")
+OBJDUMP_INSN_RE = re.compile(r"^\s*([0-9a-fA-F]+):\s*([0-9a-fA-F ]+)")
+NM_SYMBOL_RE = re.compile(r"^([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([A-Za-z])\s+(.+)$")
+
+
+def code_symbol_from_region_name(name):
+    if name == "mixed_region_loop":
+        return "mixed_region_kernel"
+    match = re.fullmatch(r"mixed_region_loop_(\d+)", name)
+    if match:
+        return f"mixed_region_{match.group(1)}_kernel"
+    return None
+
+
+def objdump_instruction_width(byte_text):
+    width = 0
+    for token in byte_text.split():
+        if not re.fullmatch(r"[0-9a-fA-F]+", token):
+            break
+        if len(token) % 2 != 0:
+            break
+        width += len(token) // 2
+    return width
+
+
+def parse_objdump_function_ranges(text):
+    ranges = {}
+    current_name = None
+    current_start = None
+    current_end = None
+
+    def finish_current():
+        if current_name is None or current_start is None or current_end is None:
+            return
+        if current_end > current_start:
+            ranges[current_name] = (current_start, current_end)
+
+    for line in text.splitlines():
+        header = OBJDUMP_FUNC_RE.match(line.strip())
+        if header:
+            finish_current()
+            current_start = int(header.group(1), 16)
+            current_name = header.group(2)
+            current_end = current_start
+            continue
+
+        if current_name is None:
+            continue
+
+        insn = OBJDUMP_INSN_RE.match(line)
+        if not insn:
+            continue
+        width = objdump_instruction_width(insn.group(2))
+        if width <= 0:
+            continue
+        current_end = max(current_end, int(insn.group(1), 16) + width)
+
+    finish_current()
+    return ranges
+
+
+def read_objdump_function_ranges(binary_path):
+    binary_path = Path(binary_path)
+    if not binary_path.exists():
+        return {}
+
+    for tool in ("objdump", "llvm-objdump"):
+        try:
+            completed = run_cmd([tool, "-d", str(binary_path)], check=True, capture=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        return parse_objdump_function_ranges(completed.stdout or "")
+    return {}
+
+
+def parse_nm_function_ranges(text):
+    ranges = {}
+    for line in text.splitlines():
+        match = NM_SYMBOL_RE.match(line.strip())
+        if not match:
+            continue
+        symbol_type = match.group(3).lower()
+        if symbol_type not in ("t", "w"):
+            continue
+        start = int(match.group(1), 16)
+        size = int(match.group(2), 16)
+        if size <= 0:
+            continue
+        name = match.group(4).split()[0]
+        ranges[name] = (start, start + size)
+    return ranges
+
+
+def read_nm_function_ranges(binary_path):
+    binary_path = Path(binary_path)
+    if not binary_path.exists():
+        return {}
+
+    for tool in ("nm", "llvm-nm"):
+        try:
+            completed = run_cmd([tool, "-S", "-n", str(binary_path)], check=True, capture=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        ranges = parse_nm_function_ranges(completed.stdout or "")
+        if ranges:
+            return ranges
+    return {}
+
+
+def read_binary_function_ranges(binary_path):
+    nm_ranges = read_nm_function_ranges(binary_path)
+    objdump_ranges = read_objdump_function_ranges(binary_path)
+
+    if nm_ranges:
+        return {
+            name: (start, end, "nm+objdump" if name in objdump_ranges else "nm")
+            for name, (start, end) in nm_ranges.items()
+        }
+
+    return {
+        name: (start, end, "objdump")
+        for name, (start, end) in objdump_ranges.items()
+    }
+
+
+def exact_code_region_line(match, function_ranges):
+    info = match.groupdict()
+    name = info["name"]
+    symbol = info.get("symbol") or code_symbol_from_region_name(name)
+    if not symbol:
+        return match.group(0)
+
+    function_range = function_ranges.get(symbol)
+    if function_range is None:
+        return match.group(0)
+
+    symbol_entry, symbol_end, source = function_range
+    runtime_entry = int(info["entry"], 16)
+    slide = runtime_entry - symbol_entry
+    runtime_end = symbol_end + slide
+    byte_count = symbol_end - symbol_entry
+    cache_lines = (byte_count + 63) // 64
+
+    return (
+        f"code_region kind={info['kind']} name={name} symbol={symbol} "
+        f"entry=0x{runtime_entry:x} end=0x{runtime_end:x} bytes={byte_count} "
+        f"cache_lines={cache_lines} ldr_per_unit={info['ldr_per_unit']} "
+        f"reps={info['reps']} source={source}"
+    )
+
+
+def enrich_code_regions_from_binary(raw_output, binary_path):
+    if "code_region " not in raw_output:
+        return raw_output
+
+    function_ranges = read_binary_function_ranges(binary_path)
+    if not function_ranges:
+        return raw_output
+
+    lines = []
+    for line in raw_output.splitlines():
+        match = CODE_REGION_RE.match(line)
+        if match:
+            lines.append(exact_code_region_line(match, function_ranges))
+        else:
+            lines.append(line)
+    return "\n".join(lines) + ("\n" if raw_output.endswith("\n") else "")
+
+
 def hdc_shell(hdc, command):
     return run_cmd([hdc, "shell", command])
 
@@ -446,6 +625,7 @@ def run_one(cfg, knobs):
         knobs,
         flat_cfg,
     )
+    output = enrich_code_regions_from_binary(output, knobs["out_bin"])
     metrics = parse_runner_metrics(
         output,
         knobs["events"],
