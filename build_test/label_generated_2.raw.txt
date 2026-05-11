@@ -1,0 +1,99 @@
+===== round 1/1 =====
+===== perf group =====
+iters=100
+cpu_core=0
+
+ Performance counter stats for process id '2420782':
+
+     5,748,243,601      cpu-cycles:u                                                
+       720,157,028      instructions:u            #    0.13  insn per cycle         
+        24,511,530      br_retired:u                                                
+             1,531      br_mis_pred:u                                               
+        90,302,613      l1i_cache:u                                                 
+        81,620,945      l1i_cache_refill:u                                          
+        90,302,613      l1i_tlb:u                                                   
+        20,550,347      l1i_tlb_refill:u                                            
+        81,620,902      l2i_cache:u                                                 
+        81,618,560      l2i_cache_refill:u                                          
+        20,551,284      l2i_tlb:u                                                   
+        17,511,765      l2i_tlb_refill:u                                            
+
+       3.003107552 seconds time elapsed
+
+===== memory layout =====
+iters=100 active_data_regions=2 total_data_bytes=2621440 allocator=arena advice=default arena_gap_bytes=0 arena_bytes=2691072 arena_hint=0x0 prefault=1 warmup_iters=1
+arena_span start=0xffff94f8f000 end=0xffff9520f000 span_bytes=2621440 mapped_bytes=2691072
+data_region kind=attached-data name=hot_region_loop start=0xffff94f8f000 end=0xffff9518f000 bytes=2097152 pages=512 nodes=262144 reps=100 arena_off=0x0
+data_region kind=attached-data name=itlb start=0xffff9518f000 end=0xffff9520f000 bytes=524288 pages=128 nodes=65536 reps=100 arena_off=0x200000
+code_region kind=attached-code name=hot_region_loop symbol=hot_l1_attached_burst entry=0x404bb4 end=0x405004 bytes=1104 cache_lines=18 ldr_per_unit=2 reps=100 source=nm+objdump
+code_region kind=attached-code name=itlb symbol=itlb_attached_burst entry=0x405004 end=0x409054 bytes=16464 cache_lines=258 ldr_per_unit=1 reps=100 source=nm+objdump
+PROXYBENCH_READY
+completed_iters=100
+bench_seconds=2.214587075
+
+===== perf group =====
+iters=100
+cpu_core=0
+
+ Performance counter stats for process id '2420791':
+
+     5,825,138,101      cpu-cycles:u                                                
+       720,157,022      instructions:u            #    0.12  insn per cycle         
+        43,803,710      l1d_cache:u                                                 
+        41,028,849      l1d_cache_refill:u                                          
+        47,747,453      l1d_tlb:u                                                   
+         2,642,321      l1d_tlb_refill:u                                            
+       205,723,287      l2d_cache:u                                                 
+        95,666,107      l2d_cache_refill:u                                          
+         2,652,323      l2d_tlb:u                                                   
+         1,202,942      l2d_tlb_refill:u                                            
+        12,919,010      ll_cache:u                                                  
+            21,534      ll_cache_miss:u                                             
+
+       3.003126303 seconds time elapsed
+
+===== memory layout =====
+iters=100 active_data_regions=2 total_data_bytes=2621440 allocator=arena advice=default arena_gap_bytes=0 arena_bytes=2691072 arena_hint=0x0 prefault=1 warmup_iters=1
+arena_span start=0xffff9762f000 end=0xffff978af000 span_bytes=2621440 mapped_bytes=2691072
+data_region kind=attached-data name=hot_region_loop start=0xffff9762f000 end=0xffff9782f000 bytes=2097152 pages=512 nodes=262144 reps=100 arena_off=0x0
+data_region kind=attached-data name=itlb start=0xffff9782f000 end=0xffff978af000 bytes=524288 pages=128 nodes=65536 reps=100 arena_off=0x200000
+code_region kind=attached-code name=hot_region_loop symbol=hot_l1_attached_burst entry=0x404bb4 end=0x405004 bytes=1104 cache_lines=18 ldr_per_unit=2 reps=100 source=nm+objdump
+code_region kind=attached-code name=itlb symbol=itlb_attached_burst entry=0x405004 end=0x409054 bytes=16464 cache_lines=258 ldr_per_unit=1 reps=100 source=nm+objdump
+PROXYBENCH_READY
+completed_iters=100
+bench_seconds=2.244566958
+
+
+===== derived =====
+ipc=0.1253
+br_retired_mpki=34.0364
+br_mis_pred_mpki=0.0021
+l1i_cache_mpki=125.3929
+l1i_cache_refill_mpki=113.3377
+l1i_tlb_mpki=125.3929
+l1i_tlb_refill_mpki=28.5359
+l2i_cache_mpki=113.3376
+l2i_cache_refill_mpki=113.3344
+l2i_cache_access_proxy_mpki=113.3376
+l2i_tlb_mpki=28.5372
+l2i_tlb_refill_mpki=24.3166
+l2i_tlb_access_proxy_mpki=28.5372
+l1i_miss_rate=0.903860
+l2i_miss_rate=0.999971
+l1i_tlb_miss_rate=0.227572
+l2i_tlb_miss_rate=0.852101
+l1d_cache_mpki=60.8252
+l1d_cache_refill_mpki=56.9721
+l1d_tlb_mpki=66.3014
+l1d_tlb_refill_mpki=3.6691
+l2d_cache_mpki=285.6645
+l2d_cache_refill_mpki=132.8406
+l2d_tlb_mpki=3.6830
+l2d_tlb_refill_mpki=1.6704
+ll_cache_mpki=17.9392
+ll_cache_miss_mpki=0.0299
+l1d_miss_rate=0.936652
+l2d_miss_rate=0.465023
+l1d_tlb_miss_rate=0.055340
+l2d_tlb_miss_rate=0.453543
+ll_miss_rate=0.001667

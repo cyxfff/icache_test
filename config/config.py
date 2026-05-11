@@ -63,9 +63,6 @@ DERIVED_KEYS = [
     # "itlb_walk_mpki",
 ]
 
-MIXED_REGION_SLOT_COUNT = 7
-
-
 ACTIVE_PROFILE = "linux"
 
 
@@ -261,21 +258,20 @@ def build_knobs(root, artifact_stem="icache_bench"):
 
 
 def build_base_cfg():
-    mixed_region_default = {
-        "size": 8192,
-        "ldr_count_per_unit": 0,
+    attached_data_default = {
+        "data_pool_nodes": 0,
+        "data_pages": 0,
+        "data_nodes_per_page": 8,
         "data_mode": "linear",
-        "pages": 1,
-        "lines_per_page": 8,
-        "nodes_per_page": 8,
-        "stride_lines": 1,
-        "stride_pages": 1,
-        "region_reps": 0,
-        "pos": 2,
+        "data_stride_nodes": 1,
+        "data_stride_lines": 1,
+        "data_stride_pages": 1,
+        "fusion_ldr_per_unit": 0,
     }
     cfg = {
         "modules": {
             "cold_block_sequence": {
+                **attached_data_default,
                 "blocks": 0,
                 "block_align": 64,
                 "direct_run_len": 0,
@@ -284,6 +280,7 @@ def build_base_cfg():
                 "pos": 3,
             },
             "fetch_amplifier": {
+                **attached_data_default,
                 "blocks": 0,
                 "block_align": 64,
                 "direct_run_len": 1,
@@ -294,59 +291,14 @@ def build_base_cfg():
                 "pos": 4,
             },
             "hot_region_loop": {
+                **attached_data_default,
                 "size": 8192,
                 "branch_pairs_per_unit": 3,
                 "region_reps": 0,
                 "pos": 1,
             },
-            "mixed_region_loop": {
-                **mixed_region_default,
-            },
-            "data_stream": {
-                "size": 0,
-                "stride": 64,
-                "region_reps": 0,
-                "pos": 5,
-            },
-            "data_pointer_chase": {
-                "pages": 0,
-                "lines_per_page": 1,
-                "region_reps": 0,
-                "pos": 6,
-            },
-            "data_page_stride": {
-                "pages": 0,
-                "page_stride": 1,
-                "line_index": 0,
-                "region_reps": 0,
-                "pos": 7,
-            },
-            "data_indirect_gather": {
-                "pages": 0,
-                "lines_per_page": 1,
-                "index_stride": 1,
-                "region_reps": 0,
-                "pos": 8,
-            },
-            "data_hot_stride": {
-                "access_count": 0,
-                "stride": 4,
-                "region_reps": 0,
-                "pos": 9,
-            },
-            "data_cold_stride": {
-                "access_count": 0,
-                "stride": 256,
-                "region_reps": 0,
-                "pos": 10,
-            },
-            "data_tlb_indirect": {
-                "pages": 0,
-                "line_index": 0,
-                "region_reps": 0,
-                "pos": 11,
-            },
             "itlb": {
+                **attached_data_default,
                 "funcs": 0,
                 "lines_per_page": 1,
                 "region_reps": 1,
@@ -360,16 +312,19 @@ def build_base_cfg():
             "opt_level": 0,
         },
         "run": {
-            "iters": 100,
+            "iters": 10,
+            "warmup_iters": 1,
             "rounds": 1,
             "cpu_core": 0,
         },
+        "memory": {
+            "allocator": "posix",
+            "advice": "default",
+            "arena_gap_bytes": 0,
+            "arena_hint": 0,
+            "prefault": 0,
+        },
     }
-    for slot_id in range(1, MIXED_REGION_SLOT_COUNT):
-        cfg["modules"][f"mixed_region_loop_{slot_id}"] = {
-            **mixed_region_default,
-            "pos": 2 + slot_id,
-        }
     return cfg
 
 
@@ -377,6 +332,7 @@ def flatten_cfg(cfg):
     modules = cfg["modules"]
     build = cfg["build"]
     run = cfg["run"]
+    memory = cfg.get("memory", {})
 
     return {
         "cold_block_sequence_blocks": modules["cold_block_sequence"]["blocks"],
@@ -385,6 +341,14 @@ def flatten_cfg(cfg):
         "cold_block_sequence_region_reps": modules["cold_block_sequence"]["region_reps"],
         "cold_block_sequence_layout": modules["cold_block_sequence"]["layout"],
         "cold_block_sequence_pos": modules["cold_block_sequence"]["pos"],
+        "cold_block_sequence_data_pages": modules["cold_block_sequence"].get("data_pages", 0),
+        "cold_block_sequence_data_pool_nodes": modules["cold_block_sequence"].get("data_pool_nodes", 0),
+        "cold_block_sequence_data_nodes_per_page": modules["cold_block_sequence"].get("data_nodes_per_page", 8),
+        "cold_block_sequence_data_mode": modules["cold_block_sequence"].get("data_mode", "linear"),
+        "cold_block_sequence_data_stride_nodes": modules["cold_block_sequence"].get("data_stride_nodes", modules["cold_block_sequence"].get("data_stride_lines", 1)),
+        "cold_block_sequence_data_stride_lines": modules["cold_block_sequence"].get("data_stride_lines", 1),
+        "cold_block_sequence_data_stride_pages": modules["cold_block_sequence"].get("data_stride_pages", 1),
+        "cold_block_sequence_fusion_ldr_per_unit": modules["cold_block_sequence"].get("fusion_ldr_per_unit", 0),
         "fetch_amplifier_blocks": modules["fetch_amplifier"]["blocks"],
         "fetch_amplifier_block_align": modules["fetch_amplifier"]["block_align"],
         "fetch_amplifier_direct_run_len": modules["fetch_amplifier"]["direct_run_len"],
@@ -393,93 +357,51 @@ def flatten_cfg(cfg):
         "fetch_amplifier_region_reps": modules["fetch_amplifier"]["region_reps"],
         "fetch_amplifier_layout": modules["fetch_amplifier"]["layout"],
         "fetch_amplifier_pos": modules["fetch_amplifier"]["pos"],
+        "fetch_amplifier_data_pages": modules["fetch_amplifier"].get("data_pages", 0),
+        "fetch_amplifier_data_pool_nodes": modules["fetch_amplifier"].get("data_pool_nodes", 0),
+        "fetch_amplifier_data_nodes_per_page": modules["fetch_amplifier"].get("data_nodes_per_page", 8),
+        "fetch_amplifier_data_mode": modules["fetch_amplifier"].get("data_mode", "linear"),
+        "fetch_amplifier_data_stride_nodes": modules["fetch_amplifier"].get("data_stride_nodes", modules["fetch_amplifier"].get("data_stride_lines", 1)),
+        "fetch_amplifier_data_stride_lines": modules["fetch_amplifier"].get("data_stride_lines", 1),
+        "fetch_amplifier_data_stride_pages": modules["fetch_amplifier"].get("data_stride_pages", 1),
+        "fetch_amplifier_fusion_ldr_per_unit": modules["fetch_amplifier"].get("fusion_ldr_per_unit", 0),
         "hot_region_loop_size": modules["hot_region_loop"]["size"],
         "hot_region_loop_branch_pairs_per_unit": modules["hot_region_loop"]["branch_pairs_per_unit"],
         "hot_region_loop_region_reps": modules["hot_region_loop"]["region_reps"],
         "hot_region_loop_pos": modules["hot_region_loop"]["pos"],
-        "mixed_region_loop_size": modules["mixed_region_loop"]["size"],
-        "mixed_region_loop_ldr_count_per_unit": modules["mixed_region_loop"]["ldr_count_per_unit"],
-        "mixed_region_loop_data_mode": modules["mixed_region_loop"]["data_mode"],
-        "mixed_region_loop_pages": modules["mixed_region_loop"]["pages"],
-        "mixed_region_loop_lines_per_page": modules["mixed_region_loop"]["lines_per_page"],
-        "mixed_region_loop_nodes_per_page": modules["mixed_region_loop"].get(
-            "nodes_per_page",
-            modules["mixed_region_loop"]["lines_per_page"],
-        ),
-        "mixed_region_loop_stride_lines": modules["mixed_region_loop"].get("stride_lines", 1),
-        "mixed_region_loop_stride_pages": modules["mixed_region_loop"].get("stride_pages", 1),
-        "mixed_region_loop_region_reps": modules["mixed_region_loop"]["region_reps"],
-        "mixed_region_loop_pos": modules["mixed_region_loop"]["pos"],
-        **{
-            key: value
-            for slot_id in range(1, MIXED_REGION_SLOT_COUNT)
-            for key, value in {
-                f"mixed_region_loop_{slot_id}_size": modules[f"mixed_region_loop_{slot_id}"]["size"],
-                f"mixed_region_loop_{slot_id}_ldr_count_per_unit": modules[f"mixed_region_loop_{slot_id}"][
-                    "ldr_count_per_unit"
-                ],
-                f"mixed_region_loop_{slot_id}_data_mode": modules[f"mixed_region_loop_{slot_id}"]["data_mode"],
-                f"mixed_region_loop_{slot_id}_pages": modules[f"mixed_region_loop_{slot_id}"]["pages"],
-                f"mixed_region_loop_{slot_id}_lines_per_page": modules[f"mixed_region_loop_{slot_id}"][
-                    "lines_per_page"
-                ],
-                f"mixed_region_loop_{slot_id}_nodes_per_page": modules[f"mixed_region_loop_{slot_id}"].get(
-                    "nodes_per_page",
-                    modules[f"mixed_region_loop_{slot_id}"]["lines_per_page"],
-                ),
-                f"mixed_region_loop_{slot_id}_stride_lines": modules[f"mixed_region_loop_{slot_id}"].get(
-                    "stride_lines",
-                    1,
-                ),
-                f"mixed_region_loop_{slot_id}_stride_pages": modules[f"mixed_region_loop_{slot_id}"].get(
-                    "stride_pages",
-                    1,
-                ),
-                f"mixed_region_loop_{slot_id}_region_reps": modules[f"mixed_region_loop_{slot_id}"]["region_reps"],
-                f"mixed_region_loop_{slot_id}_pos": modules[f"mixed_region_loop_{slot_id}"]["pos"],
-            }.items()
-        },
-        "data_stream_size": modules["data_stream"]["size"],
-        "data_stream_stride": modules["data_stream"]["stride"],
-        "data_stream_region_reps": modules["data_stream"]["region_reps"],
-        "data_stream_pos": modules["data_stream"]["pos"],
-        "data_pointer_chase_pages": modules["data_pointer_chase"]["pages"],
-        "data_pointer_chase_lines_per_page": modules["data_pointer_chase"]["lines_per_page"],
-        "data_pointer_chase_region_reps": modules["data_pointer_chase"]["region_reps"],
-        "data_pointer_chase_pos": modules["data_pointer_chase"]["pos"],
-        "data_page_stride_pages": modules["data_page_stride"]["pages"],
-        "data_page_stride_page_stride": modules["data_page_stride"]["page_stride"],
-        "data_page_stride_line_index": modules["data_page_stride"]["line_index"],
-        "data_page_stride_region_reps": modules["data_page_stride"]["region_reps"],
-        "data_page_stride_pos": modules["data_page_stride"]["pos"],
-        "data_indirect_gather_pages": modules["data_indirect_gather"]["pages"],
-        "data_indirect_gather_lines_per_page": modules["data_indirect_gather"]["lines_per_page"],
-        "data_indirect_gather_index_stride": modules["data_indirect_gather"]["index_stride"],
-        "data_indirect_gather_region_reps": modules["data_indirect_gather"]["region_reps"],
-        "data_indirect_gather_pos": modules["data_indirect_gather"]["pos"],
-        "data_hot_stride_access_count": modules["data_hot_stride"]["access_count"],
-        "data_hot_stride_stride": modules["data_hot_stride"]["stride"],
-        "data_hot_stride_region_reps": modules["data_hot_stride"]["region_reps"],
-        "data_hot_stride_pos": modules["data_hot_stride"]["pos"],
-        "data_cold_stride_access_count": modules["data_cold_stride"]["access_count"],
-        "data_cold_stride_stride": modules["data_cold_stride"]["stride"],
-        "data_cold_stride_region_reps": modules["data_cold_stride"]["region_reps"],
-        "data_cold_stride_pos": modules["data_cold_stride"]["pos"],
-        "data_tlb_indirect_pages": modules["data_tlb_indirect"]["pages"],
-        "data_tlb_indirect_line_index": modules["data_tlb_indirect"]["line_index"],
-        "data_tlb_indirect_region_reps": modules["data_tlb_indirect"]["region_reps"],
-        "data_tlb_indirect_pos": modules["data_tlb_indirect"]["pos"],
+        "hot_region_loop_data_pages": modules["hot_region_loop"].get("data_pages", 0),
+        "hot_region_loop_data_pool_nodes": modules["hot_region_loop"].get("data_pool_nodes", 0),
+        "hot_region_loop_data_nodes_per_page": modules["hot_region_loop"].get("data_nodes_per_page", 8),
+        "hot_region_loop_data_mode": modules["hot_region_loop"].get("data_mode", "linear"),
+        "hot_region_loop_data_stride_nodes": modules["hot_region_loop"].get("data_stride_nodes", modules["hot_region_loop"].get("data_stride_lines", 1)),
+        "hot_region_loop_data_stride_lines": modules["hot_region_loop"].get("data_stride_lines", 1),
+        "hot_region_loop_data_stride_pages": modules["hot_region_loop"].get("data_stride_pages", 1),
+        "hot_region_loop_fusion_ldr_per_unit": modules["hot_region_loop"].get("fusion_ldr_per_unit", 0),
         "itlb_funcs": modules["itlb"]["funcs"],
         "itlb_lines_per_page": modules["itlb"]["lines_per_page"],
         "itlb_region_reps": modules["itlb"]["region_reps"],
         "itlb_mode": modules["itlb"]["mode"],
         "itlb_direct_run_len": modules["itlb"]["direct_run_len"],
         "itlb_pos": modules["itlb"]["pos"],
+        "itlb_data_pages": modules["itlb"].get("data_pages", 0),
+        "itlb_data_pool_nodes": modules["itlb"].get("data_pool_nodes", 0),
+        "itlb_data_nodes_per_page": modules["itlb"].get("data_nodes_per_page", 8),
+        "itlb_data_mode": modules["itlb"].get("data_mode", "linear"),
+        "itlb_data_stride_nodes": modules["itlb"].get("data_stride_nodes", modules["itlb"].get("data_stride_lines", 1)),
+        "itlb_data_stride_lines": modules["itlb"].get("data_stride_lines", 1),
+        "itlb_data_stride_pages": modules["itlb"].get("data_stride_pages", 1),
+        "itlb_fusion_ldr_per_unit": modules["itlb"].get("fusion_ldr_per_unit", 0),
         "seed": build["seed"],
         "opt_level": build["opt_level"],
         "iters": run["iters"],
+        "warmup_iters": run.get("warmup_iters", 0),
         "rounds": run["rounds"],
         "cpu_core": run["cpu_core"],
+        "memory_allocator": memory.get("allocator", "posix"),
+        "memory_advice": memory.get("advice", "default"),
+        "memory_arena_gap_bytes": memory.get("arena_gap_bytes", 0),
+        "memory_arena_hint": memory.get("arena_hint", 0),
+        "memory_prefault": memory.get("prefault", 0),
     }
 
 
@@ -496,6 +418,14 @@ def zero_all_modules(cfg):
     cold_block_sequence["blocks"] = 0
     cold_block_sequence["direct_run_len"] = 4
     cold_block_sequence["region_reps"] = 0
+    cold_block_sequence["data_pool_nodes"] = 0
+    cold_block_sequence["data_pages"] = 0
+    cold_block_sequence["data_nodes_per_page"] = 8
+    cold_block_sequence["data_mode"] = "linear"
+    cold_block_sequence["data_stride_nodes"] = 1
+    cold_block_sequence["data_stride_lines"] = 1
+    cold_block_sequence["data_stride_pages"] = 1
+    cold_block_sequence["fusion_ldr_per_unit"] = 0
 
     fetch_amplifier["blocks"] = 0
     fetch_amplifier["direct_run_len"] = 1
@@ -503,63 +433,37 @@ def zero_all_modules(cfg):
     fetch_amplifier["block_slots"] = 16
     fetch_amplifier["region_reps"] = 0
     fetch_amplifier["layout"] = "linear"
+    fetch_amplifier["data_pool_nodes"] = 0
+    fetch_amplifier["data_pages"] = 0
+    fetch_amplifier["data_nodes_per_page"] = 8
+    fetch_amplifier["data_mode"] = "linear"
+    fetch_amplifier["data_stride_nodes"] = 1
+    fetch_amplifier["data_stride_lines"] = 1
+    fetch_amplifier["data_stride_pages"] = 1
+    fetch_amplifier["fusion_ldr_per_unit"] = 0
 
     hot_region_loop["size"] = 0
     hot_region_loop["branch_pairs_per_unit"] = 3
     hot_region_loop["region_reps"] = 0
-
-    for slot_id in range(MIXED_REGION_SLOT_COUNT):
-        module_name = "mixed_region_loop" if slot_id == 0 else f"mixed_region_loop_{slot_id}"
-        mixed_region_loop = cfg["modules"][module_name]
-        mixed_region_loop["size"] = 0
-        mixed_region_loop["ldr_count_per_unit"] = 0
-        mixed_region_loop["data_mode"] = "linear"
-        mixed_region_loop["pages"] = 1
-        mixed_region_loop["lines_per_page"] = 8
-        mixed_region_loop["nodes_per_page"] = 8
-        mixed_region_loop["stride_lines"] = 1
-        mixed_region_loop["stride_pages"] = 1
-        mixed_region_loop["region_reps"] = 0
-
-    data_stream = cfg["modules"]["data_stream"]
-    data_stream["size"] = 0
-    data_stream["stride"] = 64
-    data_stream["region_reps"] = 0
-
-    data_pointer_chase = cfg["modules"]["data_pointer_chase"]
-    data_pointer_chase["pages"] = 0
-    data_pointer_chase["lines_per_page"] = 1
-    data_pointer_chase["region_reps"] = 0
-
-    data_page_stride = cfg["modules"]["data_page_stride"]
-    data_page_stride["pages"] = 0
-    data_page_stride["page_stride"] = 1
-    data_page_stride["line_index"] = 0
-    data_page_stride["region_reps"] = 0
-
-    data_indirect_gather = cfg["modules"]["data_indirect_gather"]
-    data_indirect_gather["pages"] = 0
-    data_indirect_gather["lines_per_page"] = 1
-    data_indirect_gather["index_stride"] = 1
-    data_indirect_gather["region_reps"] = 0
-
-    data_hot_stride = cfg["modules"]["data_hot_stride"]
-    data_hot_stride["access_count"] = 0
-    data_hot_stride["stride"] = 4
-    data_hot_stride["region_reps"] = 0
-
-    data_cold_stride = cfg["modules"]["data_cold_stride"]
-    data_cold_stride["access_count"] = 0
-    data_cold_stride["stride"] = 256
-    data_cold_stride["region_reps"] = 0
-
-    data_tlb_indirect = cfg["modules"]["data_tlb_indirect"]
-    data_tlb_indirect["pages"] = 0
-    data_tlb_indirect["line_index"] = 0
-    data_tlb_indirect["region_reps"] = 0
+    hot_region_loop["data_pool_nodes"] = 0
+    hot_region_loop["data_pages"] = 0
+    hot_region_loop["data_nodes_per_page"] = 8
+    hot_region_loop["data_mode"] = "linear"
+    hot_region_loop["data_stride_nodes"] = 1
+    hot_region_loop["data_stride_lines"] = 1
+    hot_region_loop["data_stride_pages"] = 1
+    hot_region_loop["fusion_ldr_per_unit"] = 0
 
     itlb["funcs"] = 0
     itlb["lines_per_page"] = 1
     itlb["region_reps"] = 0
     itlb["mode"] = "chain"
     itlb["direct_run_len"] = 0
+    itlb["data_pool_nodes"] = 0
+    itlb["data_pages"] = 0
+    itlb["data_nodes_per_page"] = 8
+    itlb["data_mode"] = "linear"
+    itlb["data_stride_nodes"] = 1
+    itlb["data_stride_lines"] = 1
+    itlb["data_stride_pages"] = 1
+    itlb["fusion_ldr_per_unit"] = 0

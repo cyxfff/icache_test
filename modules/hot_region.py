@@ -16,10 +16,10 @@ class HotRegionBuilder:
         out.append('        "eor x10, x10, x9\\n\\t"\n')
         # Inject always-not-taken conditional branches to raise br_retired
         # without materially perturbing the hot fetch footprint.
-        for label_id in range(1, branch_pairs + 1):
+        for label_idx in range(1, branch_pairs + 1):
             out.append('        "cmp x9, x9\\n\\t"\n')
-            out.append(f'        "b.ne {label_id}f\\n\\t"\n')
-            out.append(f'        "{label_id}:\\n\\t"\n')
+            out.append(f'        "b.ne {label_idx}f\\n\\t"\n')
+            out.append(f'        "{label_idx}:\\n\\t"\n')
         if filler_nops > 0:
             out.append(f'        ".rept {filler_nops}\\n\\t"\n')
             out.append('        "nop\\n\\t"\n')

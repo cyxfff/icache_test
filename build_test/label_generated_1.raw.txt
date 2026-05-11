@@ -1,0 +1,95 @@
+===== round 1/1 =====
+===== perf group =====
+iters=100
+cpu_core=0
+
+ Performance counter stats for process id '2420191':
+
+     9,092,443,814      cpu-cycles:u                                                
+       696,726,513      instructions:u            #    0.08  insn per cycle         
+        20,571,331      br_retired:u                                                
+             1,225      br_mis_pred:u                                               
+        87,560,534      l1i_cache:u                                                 
+        80,641,787      l1i_cache_refill:u                                          
+        87,560,534      l1i_tlb:u                                                   
+        20,550,056      l1i_tlb_refill:u                                            
+        80,641,734      l2i_cache:u                                                 
+        80,635,062      l2i_cache_refill:u                                          
+        20,550,389      l2i_tlb:u                                                   
+        17,496,656      l2i_tlb_refill:u                                            
+
+       4.004224861 seconds time elapsed
+
+===== memory layout =====
+iters=100 active_data_regions=1 total_data_bytes=524288 allocator=arena advice=default arena_gap_bytes=0 arena_bytes=589824 arena_hint=0x0 prefault=1 warmup_iters=1
+arena_span start=0xffffaee50000 end=0xffffaeed0000 span_bytes=524288 mapped_bytes=589824
+data_region kind=attached-data name=itlb start=0xffffaee50000 end=0xffffaeed0000 bytes=524288 pages=128 nodes=65536 reps=100 arena_off=0x0
+code_region kind=attached-code name=itlb symbol=itlb_attached_burst entry=0x402ae8 end=0x406b38 bytes=16464 cache_lines=258 ldr_per_unit=1 reps=100 source=nm+objdump
+PROXYBENCH_READY
+completed_iters=100
+bench_seconds=3.503033931
+
+===== perf group =====
+iters=100
+cpu_core=0
+
+ Performance counter stats for process id '2420205':
+
+     9,150,118,803      cpu-cycles:u                                                
+       696,726,519      instructions:u            #    0.08  insn per cycle         
+        41,110,300      l1d_cache:u                                                 
+        40,906,787      l1d_cache_refill:u                                          
+        44,906,634      l1d_tlb:u                                                   
+         2,591,894      l1d_tlb_refill:u                                            
+       188,764,220      l2d_cache:u                                                 
+        87,004,656      l2d_cache_refill:u                                          
+         2,600,745      l2d_tlb:u                                                   
+         1,155,121      l2d_tlb_refill:u                                            
+         5,674,017      ll_cache:u                                                  
+             5,865      ll_cache_miss:u                                             
+
+       4.004159090 seconds time elapsed
+
+===== memory layout =====
+iters=100 active_data_regions=1 total_data_bytes=524288 allocator=arena advice=default arena_gap_bytes=0 arena_bytes=589824 arena_hint=0x0 prefault=1 warmup_iters=1
+arena_span start=0xffff93ad0000 end=0xffff93b50000 span_bytes=524288 mapped_bytes=589824
+data_region kind=attached-data name=itlb start=0xffff93ad0000 end=0xffff93b50000 bytes=524288 pages=128 nodes=65536 reps=100 arena_off=0x0
+code_region kind=attached-code name=itlb symbol=itlb_attached_burst entry=0x402ae8 end=0x406b38 bytes=16464 cache_lines=258 ldr_per_unit=1 reps=100 source=nm+objdump
+PROXYBENCH_READY
+completed_iters=100
+bench_seconds=3.524960834
+
+
+===== derived =====
+ipc=0.0766
+br_retired_mpki=29.5257
+br_mis_pred_mpki=0.0018
+l1i_cache_mpki=125.6742
+l1i_cache_refill_mpki=115.7438
+l1i_tlb_mpki=125.6742
+l1i_tlb_refill_mpki=29.4952
+l2i_cache_mpki=115.7437
+l2i_cache_refill_mpki=115.7342
+l2i_cache_access_proxy_mpki=115.7437
+l2i_tlb_mpki=29.4956
+l2i_tlb_refill_mpki=25.1127
+l2i_tlb_access_proxy_mpki=29.4956
+l1i_miss_rate=0.920983
+l2i_miss_rate=0.999917
+l1i_tlb_miss_rate=0.234695
+l2i_tlb_miss_rate=0.851403
+l1d_cache_mpki=59.0049
+l1d_cache_refill_mpki=58.7128
+l1d_tlb_mpki=64.4537
+l1d_tlb_refill_mpki=3.7201
+l2d_cache_mpki=270.9301
+l2d_cache_refill_mpki=124.8763
+l2d_tlb_mpki=3.7328
+l2d_tlb_refill_mpki=1.6579
+ll_cache_mpki=8.1438
+ll_cache_miss_mpki=0.0084
+l1d_miss_rate=0.995050
+l2d_miss_rate=0.460917
+l1d_tlb_miss_rate=0.057717
+l2d_tlb_miss_rate=0.444150
+ll_miss_rate=0.001034

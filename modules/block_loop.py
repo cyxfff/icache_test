@@ -10,9 +10,9 @@ class BlockLoopBuilder:
 
         width = (count - 1).bit_length()
         order = []
-        for index in range(count):
+        for idx in range(count):
             reversed_bits = 0
-            value = index
+            value = idx
             for _ in range(width):
                 reversed_bits = (reversed_bits << 1) | (value & 1)
                 value >>= 1
@@ -48,11 +48,11 @@ class BlockLoopBuilder:
         line_order = self.bit_reversal_permutation(blocks_per_page)
 
         order: List[int] = []
-        for page in page_order:
-            start = page * blocks_per_page
+        for page_idx in page_order:
+            start = page_idx * blocks_per_page
             end = min(start + blocks_per_page, total_blocks)
-            for slot in line_order:
-                block_id = start + slot
+            for slot_idx in line_order:
+                block_id = start + slot_idx
                 if block_id < end:
                     order.append(block_id)
 
@@ -89,10 +89,10 @@ class BlockLoopBuilder:
         if count <= 0:
             return ""
         out = []
-        for label_id in range(1, count + 1):
+        for label_idx in range(1, count + 1):
             out.append('        "cmp x9, x9\\n\\t"\n')
-            out.append(f'        "b.ne {label_id}f\\n\\t"\n')
-            out.append(f'        "{label_id}:\\n\\t"\n')
+            out.append(f'        "b.ne {label_idx}f\\n\\t"\n')
+            out.append(f'        "{label_idx}:\\n\\t"\n')
         return "".join(out)
 
     @staticmethod

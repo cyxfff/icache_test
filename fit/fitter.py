@@ -2,6 +2,7 @@
 
 import csv
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +55,28 @@ NON_PARAM_COLUMNS = set(METRIC_KEYS) | set(DERIVED_KEYS) | {
     "__source_csv",
     "__source_row",
 }
+
+# D-side metrics that get the ldr linear multiplier (large-count only).
+_LDR_SCALED_METRICS = frozenset({
+    "l1d_cache:u",
+    "l1d_cache_refill:u",
+    "l1d_tlb:u",
+    "l1d_tlb_refill:u",
+    "l2d_cache:u",
+    "l2d_cache_refill:u",
+    "l2d_tlb:u",
+    "l2d_tlb_refill:u",
+    "ll_cache:u",
+    "ll_cache_miss:u",
+})
+
+_LDR_RE = re.compile(r"(?:^|_)l(\d+)(?:_|$)")
+
+
+def ldr_count_from_module(module_name):
+    """Return ldr_count_per_unit encoded in the module name as _l{N}_, or 0."""
+    match = _LDR_RE.search(module_name)
+    return int(match.group(1)) if match else 0
 
 
 @dataclass(frozen=True)
@@ -247,8 +270,22 @@ def load_candidates(config):
 
 
 def effective_repeat_amount(candidate, metric, amount, config=None):
-    del candidate, metric, config
-    return float(amount)
+    threshold = float((config or {}).get("count_scale_mpki_threshold", 0.5))
+    # MPKI = per_instruction * 1000; large count if MPKI >= threshold
+    mpki = candidate.per_instruction.get(metric, 0.0) * 1000.0
+    is_large = mpki >= threshold
+
+    if not is_large:
+        # Small count: don't scale by reps
+        return 1.0
+
+    # Large count: scale by reps, then apply ldr multiplier for D-side metrics
+    effective = float(amount)
+    if metric in _LDR_SCALED_METRICS:
+        ldr = ldr_count_from_module(candidate.module)
+        if ldr > 0:
+            effective *= ldr
+    return effective
 
 
 def totals_from_repeat_amounts(candidates, repeat_amounts, config=None):

@@ -4,12 +4,12 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     from config import METRIC_KEYS, build_base_cfg, build_knobs
-    from test.runner import run_case_library_suite, run_random_combo_suite
-    from test.experiment_config import ACTIVE_RUNS
+    from experiments.runner import run_case_library_suite, run_random_combo_suite
+    from experiments.experiment_config import ACTIVE_RUNS
 else:
     from .config import METRIC_KEYS, build_base_cfg, build_knobs
-    from .test.runner import run_case_library_suite, run_random_combo_suite
-    from .test.experiment_config import ACTIVE_RUNS
+    from .experiments.runner import run_case_library_suite, run_random_combo_suite
+    from .experiments.experiment_config import ACTIVE_RUNS
 
 
 def main():

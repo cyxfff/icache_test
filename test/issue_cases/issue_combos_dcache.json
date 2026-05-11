@@ -1,0 +1,721 @@
+{
+  "source_csv": "output_0506/combo_linearity.csv",
+  "generated_at": "2026-05-08T01:36:51",
+  "focus_metrics": [
+    "l1d_cache_refill:u",
+    "l2d_cache_refill:u"
+  ],
+  "selection_rule": "keep combo where max relative diff over focus metrics between {canonical, shuffle} and sum is >= 0.20",
+  "cases": [
+    {
+      "case_id": "combo_048_s4",
+      "combo_size": 4,
+      "max_rel_diff": 0.4951796668624968,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 555094933.0,
+          "observed": 829966657.0,
+          "rel_diff": 0.4951796668624968
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 555094933.0,
+          "observed": 725288284.0,
+          "rel_diff": 0.3066022420348773
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 625472226.0,
+          "observed": 617102900.0,
+          "rel_diff": 0.013380811572598909
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 625472226.0,
+          "observed": 623600212.0,
+          "rel_diff": 0.0029929610335727363
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b64_ld1_xpage_p1_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 1,
+            "data_nodes_per_page": 1,
+            "data_mode": "cross_page",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b64_ld4_pshuf_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 4,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 2,
+          "module": "mixed_region_loop_2",
+          "label": "mix_b64_ld4_pshuf_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 4,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 3,
+          "module": "mixed_region_loop_3",
+          "label": "mix_b64_ld2_xpage_p524288_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 524288,
+            "data_nodes_per_page": 4,
+            "data_mode": "cross_page",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_046_s4",
+      "combo_size": 4,
+      "max_rel_diff": 0.47155944845608644,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 2005538585.0,
+          "observed": 2951269254.0,
+          "rel_diff": 0.47155944845608644
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 2005538585.0,
+          "observed": 1710165631.0,
+          "rel_diff": 0.14727861942381926
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 2101398060.0,
+          "observed": 2115827624.0,
+          "rel_diff": 0.006866649529504182
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 2101398060.0,
+          "observed": 2102002546.0,
+          "rel_diff": 0.0002876589692863807
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b128_ld14_indir_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 14,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b128_ld2_indir_p524288_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 524288,
+            "data_nodes_per_page": 1,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 2,
+          "module": "mixed_region_loop_2",
+          "label": "mix_b128_ld4_pshuf_p1_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 4,
+            "data_pages": 1,
+            "data_nodes_per_page": 4,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 3,
+          "module": "mixed_region_loop_3",
+          "label": "mix_b64_ld2_pshuf_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_034_s4",
+      "combo_size": 4,
+      "max_rel_diff": 0.3008965282502844,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 749508897.0,
+          "observed": 975033522.0,
+          "rel_diff": 0.3008965282502844
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 749508897.0,
+          "observed": 856857588.0,
+          "rel_diff": 0.14322537254684517
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 304528866.0,
+          "observed": 305119065.0,
+          "rel_diff": 0.0019380724321877586
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 304528866.0,
+          "observed": 305117165.0,
+          "rel_diff": 0.001931833286372268
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b64_ld7_lin_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 7,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b64_ld2_lin_p512_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 512,
+            "data_nodes_per_page": 4,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 2,
+          "module": "mixed_region_loop_2",
+          "label": "mix_b64_ld2_lin_p512_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 512,
+            "data_nodes_per_page": 4,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 3,
+          "module": "mixed_region_loop_3",
+          "label": "mix_b64_ld2_lin_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_060_s5",
+      "combo_size": 5,
+      "max_rel_diff": 0.2901327086814085,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 461377804.0,
+          "observed": 595238596.0,
+          "rel_diff": 0.2901327086814085
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 461377804.0,
+          "observed": 538784629.0,
+          "rel_diff": 0.16777318789267115
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 541444859.0,
+          "observed": 550302888.0,
+          "rel_diff": 0.016359983574984874
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 541444859.0,
+          "observed": 546449602.0,
+          "rel_diff": 0.009243310591670056
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b128_ld14_indir_p1_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 14,
+            "data_pages": 1,
+            "data_nodes_per_page": 1,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b128_ld2_pshuf_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 2,
+          "module": "mixed_region_loop_2",
+          "label": "mix_b128_ld1_pshuf_p512_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 512,
+            "data_nodes_per_page": 4,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 3,
+          "module": "mixed_region_loop_3",
+          "label": "mix_b64_ld4_indir_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 4,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 4,
+          "module": "mixed_region_loop_4",
+          "label": "mix_b64_ld1_xpage_p1_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 1,
+            "data_nodes_per_page": 1,
+            "data_mode": "cross_page",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_043_s4",
+      "combo_size": 4,
+      "max_rel_diff": 0.27399669148034594,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 328522153.0,
+          "observed": 418536136.0,
+          "rel_diff": 0.27399669148034594
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 328522153.0,
+          "observed": 411411863.0,
+          "rel_diff": 0.25231086927644725
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 650619591.0,
+          "observed": 649044733.0,
+          "rel_diff": 0.0024205511512179474
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 650619591.0,
+          "observed": 649213316.0,
+          "rel_diff": 0.002161439679119653
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b64_ld14_xpage_p1_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 14,
+            "data_pages": 1,
+            "data_nodes_per_page": 1,
+            "data_mode": "cross_page",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b64_ld1_indir_p128_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 128,
+            "data_nodes_per_page": 1,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 2,
+          "module": "mixed_region_loop_2",
+          "label": "mix_b128_ld4_indir_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 4,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 3,
+          "module": "mixed_region_loop_3",
+          "label": "mix_b128_ld1_indir_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_035_s4",
+      "combo_size": 4,
+      "max_rel_diff": 0.24334819591049534,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 444071482.0,
+          "observed": 552135476.0,
+          "rel_diff": 0.24334819591049534
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 327404931.0,
+          "observed": 320118293.0,
+          "rel_diff": 0.022255736887481392
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 327404931.0,
+          "observed": 332117929.0,
+          "rel_diff": 0.014395012273043621
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 444071482.0,
+          "observed": 445317225.0,
+          "rel_diff": 0.002805275840703502
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b64_ld14_pshuf_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 14,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b128_ld14_pshuf_p1_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 14,
+            "data_pages": 1,
+            "data_nodes_per_page": 4,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 2,
+          "module": "mixed_region_loop_2",
+          "label": "mix_b128_ld2_lin_p1_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 2,
+            "data_pages": 1,
+            "data_nodes_per_page": 4,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 3,
+          "module": "mixed_region_loop_3",
+          "label": "mix_b64_ld1_pshuf_p524288_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 524288,
+            "data_nodes_per_page": 1,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_013_s2",
+      "combo_size": 2,
+      "max_rel_diff": 0.21639979736174486,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 30673379.0,
+          "observed": 24035666.0,
+          "rel_diff": 0.21639979736174486
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 30673379.0,
+          "observed": 32592230.0,
+          "rel_diff": 0.0625575356402697
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 60681467.0,
+          "observed": 60390480.0,
+          "rel_diff": 0.004795319137554799
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 60681467.0,
+          "observed": 60456915.0,
+          "rel_diff": 0.003700503812803339
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b64_ld1_indir_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "indirect",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b64_ld1_pshuf_p1_lp1_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 4096,
+            "fusion_ldr_per_unit": 1,
+            "data_pages": 1,
+            "data_nodes_per_page": 1,
+            "data_mode": "page_shuffle",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    },
+    {
+      "case_id": "combo_015_s2",
+      "combo_size": 2,
+      "max_rel_diff": 0.20153935171524492,
+      "worst_metrics": [
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 2001044186.0,
+          "observed": 2404333334.0,
+          "rel_diff": 0.20153935171524492
+        },
+        {
+          "metric": "l2d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 2001044186.0,
+          "observed": 2339981325.0,
+          "rel_diff": 0.1693801373159683
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "canonical",
+          "sum_value": 525298551.0,
+          "observed": 588630019.0,
+          "rel_diff": 0.12056280733963037
+        },
+        {
+          "metric": "l1d_cache_refill:u",
+          "order": "shuffle",
+          "sum_value": 525298551.0,
+          "observed": 585004270.0,
+          "rel_diff": 0.11366054386850954
+        }
+      ],
+      "modules": [
+        {
+          "slot": 0,
+          "module": "mixed_region_loop",
+          "label": "mix_b128_ld4_lin_p524288_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 4,
+            "data_pages": 524288,
+            "data_nodes_per_page": 4,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        },
+        {
+          "slot": 1,
+          "module": "mixed_region_loop_1",
+          "label": "mix_b128_ld14_lin_p128_lp4_r1000",
+          "params": {
+            "instr_family": "hot_loop",
+            "instr_size_bytes": 8192,
+            "fusion_ldr_per_unit": 14,
+            "data_pages": 128,
+            "data_nodes_per_page": 4,
+            "data_mode": "linear",
+            "region_reps": 1000
+          }
+        }
+      ],
+      "notes": "extracted from output_0506/combo_linearity.csv"
+    }
+  ]
+}

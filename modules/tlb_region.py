@@ -16,23 +16,23 @@ class TLBRegionBuilder:
             return []
 
         rng = random.Random(seed ^ 0x85EBCA77)
-        phys_rank = {func_id: index for index, func_id in enumerate(phys_order)}
+        phys_rank = {func_id: idx for idx, func_id in enumerate(phys_order)}
 
         remaining = phys_order[:]
         rng.shuffle(remaining)
 
         order: List[int] = [remaining.pop()]
         while remaining:
-            cur = order[-1]
-            cur_rank = phys_rank[cur]
+            current_func = order[-1]
+            current_rank = phys_rank[current_func]
 
-            far = [func_id for func_id in remaining if abs(phys_rank[func_id] - cur_rank) >= min_phys_gap]
-            mid = [func_id for func_id in remaining if abs(phys_rank[func_id] - cur_rank) >= 2]
+            far = [func_id for func_id in remaining if abs(phys_rank[func_id] - current_rank) >= min_phys_gap]
+            mid = [func_id for func_id in remaining if abs(phys_rank[func_id] - current_rank) >= 2]
             pool = far if far else (mid if mid else remaining)
 
-            nxt = rng.choice(pool)
-            remaining.remove(nxt)
-            order.append(nxt)
+            next_func = rng.choice(pool)
+            remaining.remove(next_func)
+            order.append(next_func)
 
         return order
 
@@ -68,9 +68,9 @@ class TLBRegionBuilder:
         if mode != "chain":
             return next_map, chain_pos_map
 
-        for chain_pos, func_id in enumerate(exec_order):
-            chain_pos_map[func_id] = chain_pos
-            next_map[func_id] = exec_order[chain_pos + 1] if chain_pos + 1 < len(exec_order) else None
+        for pos_idx, func_id in enumerate(exec_order):
+            chain_pos_map[func_id] = pos_idx
+            next_map[func_id] = exec_order[pos_idx + 1] if pos_idx + 1 < len(exec_order) else None
 
         return next_map, chain_pos_map
 

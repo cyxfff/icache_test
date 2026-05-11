@@ -92,20 +92,21 @@ DEFAULT_RAW_VECTOR_METRICS = [
 RAW_VECTOR_METRICS = list(DEFAULT_RAW_VECTOR_METRICS)
 
 
-SEARCH_CONFIG = {
-    "max_templates": 20,
-    "seed_beam": 48,
-    "beam_size": 64,
-    "expand_per_state": 24,
-    "max_nnls_iter": 4000,
-    "tolerance": 0.10,
-    "top_k": 20,
+# Loaded from fitter_config.json; populated in main() before use.
+SEARCH_CONFIG = dict(FIT_CONFIG.get("search_config", {
+    "max_templates": 100,
+    "seed_beam": 96,
+    "beam_size": 128,
+    "expand_per_state": 48,
+    "max_nnls_iter": 8000,
+    "tolerance": 0.01,
+    "top_k": 50,
     "parallel_workers": 128,
     "parallel_batch_size": 16,
     "log_path": "output/raw_count_sparse_solver.log",
     "result_json": "output/raw_count_sparse_solver_results.json",
     "best_result_json": "output/raw_count_sparse_solver_best.json",
-}
+}))
 
 
 def parse_args():
@@ -120,6 +121,7 @@ def parse_args():
     parser.add_argument("--parallel-workers", type=int, default=SEARCH_CONFIG["parallel_workers"])
     parser.add_argument("--parallel-batch-size", type=int, default=SEARCH_CONFIG["parallel_batch_size"])
     parser.add_argument("--use-milp", action="store_true", help="Use MILP to solve raw-count selection instead of beam search.")
+    parser.add_argument("--use-c", action="store_true", help="Use compiled C sparse_solver binary (faster).")
     parser.add_argument(
         "--stable-low-mpki-threshold",
         type=float,
@@ -155,13 +157,15 @@ class SparseResult:
 _WORKER_CANDIDATES = None
 _WORKER_TARGET_RAW = None
 _WORKER_TARGET = None
+_WORKER_CONFIG = None
 
 
-def _init_worker(candidates, target_raw, target):
-    global _WORKER_CANDIDATES, _WORKER_TARGET_RAW, _WORKER_TARGET
+def _init_worker(candidates, target_raw, target, config=None):
+    global _WORKER_CANDIDATES, _WORKER_TARGET_RAW, _WORKER_TARGET, _WORKER_CONFIG
     _WORKER_CANDIDATES = candidates
     _WORKER_TARGET_RAW = target_raw
     _WORKER_TARGET = target
+    _WORKER_CONFIG = config
 
 
 def raw_metric_to_mpki(raw_key):
@@ -409,8 +413,19 @@ def quantize_coefficients(coeffs):
     return integer_repeats
 
 
-def evaluate_subset(candidates, indices, target_raw, target_metric_view):
+def evaluate_subset(candidates, indices, target_raw, target_metric_view, config=None):
     full_subset = [candidates[index] for index in indices]
+    threshold = float((config or {}).get("count_scale_mpki_threshold", 0.5))
+
+    # Determine per-metric whether it's "large count" (MPKI >= threshold).
+    # For NNLS: large-count columns are divided by 10000 (and target divided by 10000).
+    # Small-count columns are used as-is.
+    large_mask = np.array([
+        (target_raw[metric] / max(target_raw.get("instructions:u", 1e9), 1.0) * 1000.0) >= threshold
+        for metric in RAW_VECTOR_METRICS
+    ], dtype=float)  # 1.0 = large, 0.0 = small
+    scale = np.where(large_mask, 1.0 / 10000.0, 1.0)
+
     matrix = np.column_stack(
         [
             np.array([candidate.unit_counts[metric] for metric in RAW_VECTOR_METRICS], dtype=float)
@@ -418,9 +433,14 @@ def evaluate_subset(candidates, indices, target_raw, target_metric_view):
         ]
     )
     target_vec = np.array([target_raw[metric] for metric in RAW_VECTOR_METRICS], dtype=float)
-    scales = np.maximum(np.abs(target_vec), 1.0)
-    A = matrix / scales[:, None]
-    y = target_vec / scales
+
+    # Apply large/small scaling to both matrix and target before NNLS
+    matrix_scaled = matrix * scale[:, None]
+    target_scaled = target_vec * scale
+
+    scales = np.maximum(np.abs(target_scaled), 1.0)
+    A = matrix_scaled / scales[:, None]
+    y = target_scaled / scales
     coeffs = weighted_nnls(A, y, max_iter=int(SEARCH_CONFIG["max_nnls_iter"]))
 
     active = np.flatnonzero(coeffs > 0.0)
@@ -434,7 +454,7 @@ def evaluate_subset(candidates, indices, target_raw, target_metric_view):
         subset = [full_subset[index] for index in active]
         indices = tuple(int(indices[index]) for index in active)
         coeffs = coeffs[active]
-        raw_prediction = raw_prediction_from_coefficients(subset, coeffs)
+        raw_prediction = raw_prediction_from_coefficients(subset, coeffs, config=config)
         totals = {metric: 0.0 for metric in METRIC_KEYS}
         totals.update(raw_prediction)
     (
@@ -447,7 +467,7 @@ def evaluate_subset(candidates, indices, target_raw, target_metric_view):
     ) = evaluate_raw_prediction(raw_prediction, target_raw, target_metric_view)
 
     integer_repeats = quantize_coefficients(coeffs)
-    integer_prediction = integer_prediction_from_repeats(subset, integer_repeats)
+    integer_prediction = integer_prediction_from_repeats(subset, integer_repeats, config=config)
     (
         _integer_totals,
         integer_target_metrics_prediction,
@@ -532,18 +552,18 @@ def chunked(items, size):
 
 def _evaluate_subset_batch(subset_batch):
     return [
-        evaluate_subset(_WORKER_CANDIDATES, indices, _WORKER_TARGET_RAW, _WORKER_TARGET)
+        evaluate_subset(_WORKER_CANDIDATES, indices, _WORKER_TARGET_RAW, _WORKER_TARGET, config=_WORKER_CONFIG)
         for indices in subset_batch
     ]
 
 
-def evaluate_subsets_parallel(candidates, subset_list, target_raw, target, max_workers, batch_size, executor=None):
+def evaluate_subsets_parallel(candidates, subset_list, target_raw, target, max_workers, batch_size, executor=None, config=None):
     if not subset_list:
         return []
 
     max_workers = int(max_workers)
     if max_workers <= 1:
-        return [evaluate_subset(candidates, indices, target_raw, target) for indices in subset_list]
+        return [evaluate_subset(candidates, indices, target_raw, target, config=config) for indices in subset_list]
 
     batches = list(chunked(subset_list, batch_size))
     results = []
@@ -555,7 +575,7 @@ def evaluate_subsets_parallel(candidates, subset_list, target_raw, target, max_w
             executor_kwargs = {
                 "max_workers": max_workers,
                 "initializer": _init_worker,
-                "initargs": (candidates, target_raw, target),
+                "initargs": (candidates, target_raw, target, config),
             }
             if "fork" in mp.get_all_start_methods():
                 executor_kwargs["mp_context"] = mp.get_context("fork")
@@ -567,7 +587,7 @@ def evaluate_subsets_parallel(candidates, subset_list, target_raw, target, max_w
             f"[raw_count_sparse_solver] parallel evaluation failed, falling back to serial: {exc}",
             file=sys.stderr,
         )
-        return [evaluate_subset(candidates, indices, target_raw, target) for indices in subset_list]
+        return [evaluate_subset(candidates, indices, target_raw, target, config=config) for indices in subset_list]
     return results
 
 
@@ -718,8 +738,117 @@ def result_json_record(rank, result, target_raw, target):
     }
 
 
+
+def run_c_solver(args, config, target_raw, result_json_path, best_json_path):
+    """Invoke the compiled C sparse_solver binary and return (best_results, best)."""
+    import subprocess, shutil
+
+    binary = Path(__file__).resolve().parent / "sparse_solver"
+    if not binary.exists():
+        raise FileNotFoundError(f"C solver binary not found: {binary}. Run: gcc -O3 -fopenmp -std=c11 fit/sparse_solver.c -o fit/sparse_solver -lm")
+
+    cfg_json = Path(__file__).resolve().parent / "fitter_config.json"
+    csv_path = Path(config["output_dir"]) / config["csv_files"][0]
+
+    cmd = [
+        str(binary),
+        str(cfg_json),
+        str(csv_path),
+        str(result_json_path),
+        str(best_json_path),
+        "--max-templates",    str(SEARCH_CONFIG["max_templates"]),
+        "--seed-beam",        str(SEARCH_CONFIG["seed_beam"]),
+        "--beam-size",        str(SEARCH_CONFIG["beam_size"]),
+        "--expand-per-state", str(SEARCH_CONFIG["expand_per_state"]),
+        "--max-nnls-iter",    str(SEARCH_CONFIG["max_nnls_iter"]),
+        "--tolerance",        str(SEARCH_CONFIG["tolerance"]),
+        "--top-k",            str(SEARCH_CONFIG["top_k"]),
+        "--threads",          str(SEARCH_CONFIG["parallel_workers"]),
+    ]
+    print(f"[raw_count_sparse_solver] running C solver: {' '.join(cmd)}", file=sys.stderr)
+    subprocess.run(cmd, check=True)
+
+    # read back results and reconstruct Python SparseResult objects
+    candidates = load_candidates(config)
+    candidate_lookup = {
+        (Path(c.source_csv).name, c.source_row): c for c in candidates
+    }
+
+    def _c_record_to_result(rec):
+        plan = rec.get("repeat_plan_integer", [])
+        cands_out, coeffs_out, int_repeats_out = [], [], []
+        for item in plan:
+            key = (item["source_csv"], int(item["source_row"]))
+            cand = candidate_lookup.get(key)
+            if cand is None:
+                # fallback: match by module+case
+                for c in candidates:
+                    if c.module == item["module"] and c.case == item["case"]:
+                        cand = c; break
+            if cand is None:
+                continue
+            cands_out.append(cand)
+            coeffs_out.append(float(item["repeat_count"]))
+            int_repeats_out.append(int(item["repeat_count"]))
+
+        raw_pred = rec.get("raw_prediction", {})
+        int_pred = rec.get("integer_prediction", {})
+        raw_rel  = rec.get("raw_rel_errors", {})
+        int_rel  = rec.get("integer_rel_errors", {})
+        raw_box  = {}
+        int_box  = rec.get("integer_box_violation", {})
+        tol = SEARCH_CONFIG["tolerance"]
+        for m, tv in target_raw.items():
+            pred = raw_pred.get(m, 0.0)
+            lo, hi = (1-tol)*tv, (1+tol)*tv
+            denom = max(abs(tv), 1.0)
+            raw_box[m] = max(max(0.0, lo-pred)/denom, max(0.0, pred-hi)/denom)
+
+        totals = {m: 0.0 for m in METRIC_KEYS}
+        totals.update(raw_pred)
+        predictions, _ = predictions_from_totals(totals, _WORKER_TARGET or {})
+
+        max_bv = rec.get("max_box_violation", 1.0)
+        int_max_bv = rec.get("integer_max_box_violation", 1.0)
+        mean_re = rec.get("mean_rel_error", 1.0)
+
+        return SparseResult(
+            indices=tuple(item["source_row"] for item in plan),
+            candidates=cands_out,
+            coefficients=np.array(coeffs_out, dtype=float),
+            totals=totals,
+            raw_prediction=raw_pred,
+            raw_rel_errors=raw_rel,
+            raw_box_violations=raw_box,
+            target_metrics_prediction=predictions,
+            feasible=bool(rec.get("feasible", False)),
+            max_box_violation=max_bv,
+            mean_rel_error=mean_re,
+            objective=max_bv * 1000.0 + mean_re,
+            integer_repeats=np.array(int_repeats_out, dtype=int),
+            integer_prediction=int_pred,
+            integer_rel_errors=int_rel,
+            integer_box_violations=int_box,
+            integer_target_metrics_prediction=predictions,
+            integer_feasible=bool(rec.get("integer_feasible", False)),
+            integer_max_box_violation=int_max_bv,
+        )
+
+    with open(result_json_path, encoding="utf-8") as f:
+        payload = json.load(f)
+    best_results = [_c_record_to_result(r) for r in payload.get("results", [])]
+    best_results.sort(key=result_sort_key)
+
+    best_feasible = next((r for r in best_results if r.feasible), None)
+    best = best_feasible or (best_results[0] if best_results else None)
+    return best_results, best
+
+
 def main():
-    global RAW_VECTOR_METRICS
+    global RAW_VECTOR_METRICS, SEARCH_CONFIG
+
+    # Load SEARCH_CONFIG from fitter_config.json (already in FIT_CONFIG)
+    SEARCH_CONFIG = dict(FIT_CONFIG.get("search_config", SEARCH_CONFIG))
 
     args = parse_args()
     SEARCH_CONFIG["max_templates"] = int(args.max_templates)
@@ -746,7 +875,15 @@ def main():
     RAW_VECTOR_METRICS = list(target_raw.keys())
     candidates = load_candidates(config)
 
-    if args.use_milp:
+    log_path = PROJECT_ROOT / SEARCH_CONFIG["log_path"]
+    result_json_path = PROJECT_ROOT / SEARCH_CONFIG["result_json"]
+    best_json_path = PROJECT_ROOT / SEARCH_CONFIG["best_result_json"]
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.use_c:
+        _init_worker(candidates, target_raw, target, config)
+        best_results, best = run_c_solver(args, config, target_raw, result_json_path, best_json_path)
+    elif args.use_milp:
         milp_solution = solve_combination_milp(
             candidates,
             target_raw,
@@ -811,7 +948,7 @@ def main():
                 executor_kwargs = {
                     "max_workers": int(SEARCH_CONFIG["parallel_workers"]),
                     "initializer": _init_worker,
-                    "initargs": (candidates, target_raw, target),
+                    "initargs": (candidates, target_raw, target, config),
                 }
                 if "fork" in mp.get_all_start_methods():
                     executor_kwargs["mp_context"] = mp.get_context("fork")
@@ -832,6 +969,7 @@ def main():
                 SEARCH_CONFIG["parallel_workers"],
                 SEARCH_CONFIG["parallel_batch_size"],
                 executor=executor,
+                config=config,
             )
             seed_scores.sort(key=result_sort_key)
             beam = seed_scores[: int(SEARCH_CONFIG["seed_beam"])]
@@ -860,6 +998,7 @@ def main():
                     SEARCH_CONFIG["parallel_workers"],
                     SEARCH_CONFIG["parallel_batch_size"],
                     executor=executor,
+                    config=config,
                 )
 
                 next_beam = []
@@ -884,11 +1023,6 @@ def main():
 
     if args.use_milp:
         best = best_results[0]
-
-    log_path = PROJECT_ROOT / SEARCH_CONFIG["log_path"]
-    result_json_path = PROJECT_ROOT / SEARCH_CONFIG["result_json"]
-    best_json_path = PROJECT_ROOT / SEARCH_CONFIG["best_result_json"]
-    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with log_path.open("w", encoding="utf-8") as handle:
         handle.write("== Raw Count Sparse Solver ==\n")

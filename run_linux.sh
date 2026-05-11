@@ -80,7 +80,7 @@ run_once() {
     perf stat -e "${events}" -p "${pid}" > "${PERFLOG}" 2>&1 &
     PERF_PID=$!
 
-    sleep 0.2
+    sleep 1
     if ! kill -0 "${PERF_PID}" 2>/dev/null; then
         echo "[ERROR] perf exited before benchmark start"
         cat "${PERFLOG}"
@@ -95,7 +95,7 @@ run_once() {
     cat "${PERFLOG}"
     wait "${pid}" 2>/dev/null || true
     cat "${LOGFILE}"
-    sleep 0.2
+    sleep 0.5
     echo
 }
 

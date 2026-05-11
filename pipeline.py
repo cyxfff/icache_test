@@ -13,9 +13,18 @@ else:
 
 
 MODULES = SynthesisModuleManager()
-FETCH_AMPLIFIER = getattr(MODULES, "fetch_amplifier", MODULES.cold_block_sequence)
-MIXED_REGION = getattr(MODULES, "mixed_region", getattr(MODULES, "mixed_region_loop", MixedRegionBuilder()))
+FETCH_AMPLIFIER = MODULES.fetch_amplifier
+MIXED_REGION = MixedRegionBuilder()
 MAIN_LAYOUT_CHOICES = ("linear", "page_shuffle", "in_page_shuffle", "full_shuffle")
+ATTACHED_DATA_SPECS = (
+    {"key": "hot_l1", "label": "hot_region_loop", "prefix": "hot_l1_attached", "seed": 0x16A3B1C5},
+    {"key": "fetch", "label": "fetch_amplifier", "prefix": "fetch_attached", "seed": 0x27D4EB2F},
+    {"key": "itlb", "label": "itlb", "prefix": "itlb_attached", "seed": 0x38F112D9},
+    {"key": "main", "label": "cold_block_sequence", "prefix": "main_attached", "seed": 0x49A77C63},
+)
+
+MEMORY_ALLOCATOR_CHOICES = ("posix", "arena")
+MEMORY_ADVICE_CHOICES = ("default", "random", "sequential", "hugepage", "nohugepage")
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,222 +98,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--hot-l1-region-reps", type=int, default=0, help="Hot L1 replay count per outer iteration")
     parser.add_argument("--hot-l1-pos", type=int, default=1, help="Execution order position of the hot L1 module")
-    parser.add_argument("--hot-l2-size", type=int, default=0, help="Hot L2 loop region size in bytes")
-    parser.add_argument("--hot-l2-region-reps", type=int, default=0, help="Hot L2 replay count per outer iteration")
-    parser.add_argument("--hot-l2-pos", type=int, default=7, help="Execution order position of the hot L2 module")
-
-    parser.add_argument("--mixed-region-size", type=int, default=0, help="Mixed I+D region size in bytes")
-    parser.add_argument(
-        "--mixed-region-ldr-count-per-unit",
-        type=int,
-        default=0,
-        help="How many pointer-chasing ldr instructions to interleave into each 64B mixed-region unit",
-    )
-    parser.add_argument(
-        "--mixed-region-data-mode",
-        choices=list(MIXED_REGION.DATA_MODE_CHOICES),
-        default="linear",
-        help="Pointer-chain layout policy for mixed-region data accesses",
-    )
-    parser.add_argument(
-        "--mixed-region-pages",
-        type=int,
-        default=1,
-        help="How many 4KB pages to allocate for the mixed-region pointer pool",
-    )
-    parser.add_argument(
-        "--mixed-region-lines-per-page",
-        type=int,
-        default=8,
-        help="Legacy alias for --mixed-region-nodes-per-page",
-    )
-    parser.add_argument(
-        "--mixed-region-nodes-per-page",
-        type=int,
-        default=None,
-        help="How many evenly spaced 64B pointer nodes to place on each mixed-region page",
-    )
-    parser.add_argument(
-        "--mixed-region-stride-lines",
-        type=int,
-        default=1,
-        help="Cycle stride through selected data nodes for mixed-region line_stride mode",
-    )
-    parser.add_argument(
-        "--mixed-region-stride-pages",
-        type=int,
-        default=1,
-        help="Cycle stride through pages for mixed-region page_stride mode",
-    )
-    parser.add_argument(
-        "--mixed-region-region-reps",
-        type=int,
-        default=0,
-        help="Mixed-region replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--mixed-region-pos",
-        type=int,
-        default=2,
-        help="Execution order position of the mixed I+D region module",
-    )
-
-    parser.add_argument("--data-stream-size", type=int, default=0, help="Working-set bytes for the data-stream module")
-    parser.add_argument(
-        "--data-stream-stride",
-        type=int,
-        default=64,
-        help="Stride in bytes between consecutive data-stream loads",
-    )
-    parser.add_argument("--data-stream-region-reps", type=int, default=0, help="Data-stream replay count per outer iteration")
-    parser.add_argument("--data-stream-pos", type=int, default=5, help="Execution order position of the data-stream module")
-
-    parser.add_argument("--data-pointer-chase-pages", type=int, default=0, help="Page count for the data pointer-chase pool")
-    parser.add_argument(
-        "--data-pointer-chase-lines-per-page",
-        type=int,
-        default=1,
-        help="How many 64B lines to thread through on each data pointer-chase page",
-    )
-    parser.add_argument(
-        "--data-pointer-chase-region-reps",
-        type=int,
-        default=0,
-        help="Data pointer-chase replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--data-pointer-chase-pos",
-        type=int,
-        default=6,
-        help="Execution order position of the data pointer-chase module",
-    )
-
-    parser.add_argument("--data-page-stride-pages", type=int, default=0, help="Page count for the cross-page stride module")
-    parser.add_argument(
-        "--data-page-stride-page-stride",
-        type=int,
-        default=1,
-        help="Stride in pages between successive cross-page loads",
-    )
-    parser.add_argument(
-        "--data-page-stride-line-index",
-        type=int,
-        default=0,
-        help="Which 64B line inside each page to touch in the cross-page stride module",
-    )
-    parser.add_argument(
-        "--data-page-stride-region-reps",
-        type=int,
-        default=0,
-        help="Cross-page stride replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--data-page-stride-pos",
-        type=int,
-        default=7,
-        help="Execution order position of the cross-page stride module",
-    )
-
-    parser.add_argument("--data-indirect-gather-pages", type=int, default=0, help="Page count for the indirect-gather pool")
-    parser.add_argument(
-        "--data-indirect-gather-lines-per-page",
-        type=int,
-        default=1,
-        help="How many 64B lines to sample on each page in the indirect-gather pool",
-    )
-    parser.add_argument(
-        "--data-indirect-gather-index-stride",
-        type=int,
-        default=1,
-        help="Stride through the indirect index array for the indirect-gather module",
-    )
-    parser.add_argument(
-        "--data-indirect-gather-region-reps",
-        type=int,
-        default=0,
-        help="Indirect-gather replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--data-indirect-gather-pos",
-        type=int,
-        default=8,
-        help="Execution order position of the indirect-gather module",
-    )
-
-    parser.add_argument(
-        "--data-hot-stride-access-count",
-        type=int,
-        default=0,
-        help="How many fixed-stride accesses to issue before the hot-stride module wraps to the start",
-    )
-    parser.add_argument(
-        "--data-hot-stride-stride",
-        type=int,
-        default=4,
-        help="Byte stride for the hot-stride module",
-    )
-    parser.add_argument(
-        "--data-hot-stride-region-reps",
-        type=int,
-        default=0,
-        help="Hot-stride replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--data-hot-stride-pos",
-        type=int,
-        default=9,
-        help="Execution order position of the hot-stride module",
-    )
-
-    parser.add_argument(
-        "--data-cold-stride-access-count",
-        type=int,
-        default=0,
-        help="How many fixed-stride accesses to issue before the cold-stride module wraps to the start",
-    )
-    parser.add_argument(
-        "--data-cold-stride-stride",
-        type=int,
-        default=256,
-        help="Byte stride for the cold-stride module",
-    )
-    parser.add_argument(
-        "--data-cold-stride-region-reps",
-        type=int,
-        default=0,
-        help="Cold-stride replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--data-cold-stride-pos",
-        type=int,
-        default=10,
-        help="Execution order position of the cold-stride module",
-    )
-
-    parser.add_argument(
-        "--data-tlb-indirect-pages",
-        type=int,
-        default=0,
-        help="How many pages to thread through in the TLB-indirect module",
-    )
-    parser.add_argument(
-        "--data-tlb-indirect-line-index",
-        type=int,
-        default=0,
-        help="Which 64B line inside each page to touch in the TLB-indirect module",
-    )
-    parser.add_argument(
-        "--data-tlb-indirect-region-reps",
-        type=int,
-        default=0,
-        help="TLB-indirect replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--data-tlb-indirect-pos",
-        type=int,
-        default=11,
-        help="Execution order position of the TLB-indirect module",
-    )
 
     parser.add_argument("--itlb-funcs", type=int, default=0, help="Number of 4KB-aligned code pages in the ITLB pool")
     parser.add_argument(
@@ -328,48 +121,42 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--itlb-pos", type=int, default=2, help="Execution order position of the ITLB module")
 
-    parser.add_argument("--call-ret-funcs", type=int, default=0, help="Number of call/ret functions")
     parser.add_argument(
-        "--call-ret-lines-per-func",
-        type=int,
-        default=1,
-        help="How many 64B lines to execute in each call/ret function",
+        "--memory-allocator",
+        choices=list(MEMORY_ALLOCATOR_CHOICES),
+        default="posix",
+        help="How to allocate benchmark data regions: independent posix_memalign buffers or one shared mmap arena.",
     )
     parser.add_argument(
-        "--call-ret-region-reps",
+        "--memory-advice",
+        choices=list(MEMORY_ADVICE_CHOICES),
+        default="default",
+        help="Optional madvise hint for anonymous data regions. hugepage/nohugepage probes THP influence.",
+    )
+    parser.add_argument(
+        "--memory-arena-gap-bytes",
         type=int,
         default=0,
-        help="Call/ret replay count per outer iteration",
+        help="Padding bytes to insert between data regions when --memory-allocator=arena.",
     )
-    parser.add_argument("--call-ret-pos", type=int, default=3, help="Execution order position of the call/ret module")
-
-    parser.add_argument("--plt-stub-funcs", type=int, default=0, help="Number of PLT-style caller/stub/callee triplets")
     parser.add_argument(
-        "--plt-stub-region-reps",
+        "--memory-arena-hint",
+        type=lambda value: int(value, 0),
+        default=0,
+        help="Optional virtual-address hint for the shared arena mmap, e.g. 0x4000000000.",
+    )
+    parser.add_argument(
+        "--memory-prefault",
+        type=int,
+        choices=[0, 1],
+        default=0,
+        help="Touch each allocated page once after allocation so first-touch faults do not leak into the run.",
+    )
+    parser.add_argument(
+        "--warmup-iters",
         type=int,
         default=0,
-        help="PLT-style replay count per outer iteration",
-    )
-    parser.add_argument("--plt-stub-pos", type=int, default=4, help="Execution order position of the PLT-style module")
-
-    parser.add_argument("--indirect-target-count", type=int, default=0, help="Number of indirect-branch targets")
-    parser.add_argument(
-        "--indirect-target-block-align",
-        type=int,
-        default=64,
-        help="Alignment for indirect target blocks, in bytes",
-    )
-    parser.add_argument(
-        "--indirect-target-region-reps",
-        type=int,
-        default=0,
-        help="Indirect-target replay count per outer iteration",
-    )
-    parser.add_argument(
-        "--indirect-target-pos",
-        type=int,
-        default=5,
-        help="Execution order position of the indirect-target module",
+        help="Warmup loop iterations before PROXYBENCH_READY; not counted by perf.",
     )
     parser.add_argument("--seed", type=int, default=1337, help="Shuffle seed for the benchmark")
     return parser.parse_args()
@@ -418,99 +205,105 @@ def emit_module_loop(reps_macro: str, enable_macro: str, body: str) -> str:
     )
 
 
-def emit_memory_layout_printer(mixed_region_slots) -> str:
-    regions = [
-        (
-            "data",
-            "data_stream",
-            "g_data_stream_buf",
-            "CONFIG_DATA_STREAM_SIZE",
-            "0",
-            "CONFIG_DATA_STREAM_ACCESSES_PER_CALL",
-            "CONFIG_DATA_STREAM_REGION_REPS",
-        ),
-        (
-            "data",
-            "data_pointer_chase",
-            "g_data_pointer_chase_pool",
-            "CONFIG_DATA_POINTER_CHASE_POOL_BYTES",
-            "CONFIG_DATA_POINTER_CHASE_PAGE_COUNT",
-            "CONFIG_DATA_POINTER_CHASE_NODE_COUNT",
-            "CONFIG_DATA_POINTER_CHASE_REGION_REPS",
-        ),
-        (
-            "data",
-            "data_page_stride",
-            "g_data_page_stride_buf",
-            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
-            "CONFIG_DATA_PAGE_STRIDE_PAGE_COUNT",
-            "CONFIG_DATA_PAGE_STRIDE_OFFSET_COUNT",
-            "CONFIG_DATA_PAGE_STRIDE_REGION_REPS",
-        ),
-        (
-            "data",
-            "data_indirect_gather",
-            "g_data_indirect_gather_pool",
-            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
-            "CONFIG_DATA_INDIRECT_GATHER_PAGE_COUNT",
-            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
-            "CONFIG_DATA_INDIRECT_GATHER_REGION_REPS",
-        ),
-        (
-            "data",
-            "data_hot_stride",
-            "g_data_hot_stride_buf",
-            "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES",
-            "0",
-            "CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT",
-            "CONFIG_DATA_HOT_STRIDE_REGION_REPS",
-        ),
-        (
-            "data",
-            "data_cold_stride",
-            "g_data_cold_stride_buf",
-            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
-            "0",
-            "CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT",
-            "CONFIG_DATA_COLD_STRIDE_REGION_REPS",
-        ),
-        (
-            "data",
-            "data_tlb_indirect",
-            "g_data_tlb_indirect_buf",
-            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
-            "CONFIG_DATA_TLB_INDIRECT_PAGE_COUNT",
-            "CONFIG_DATA_TLB_INDIRECT_ACCESS_COUNT",
-            "CONFIG_DATA_TLB_INDIRECT_REGION_REPS",
-        ),
-    ]
-    for slot in mixed_region_slots:
-        slot_id = slot["slot_id"]
-        if slot_id == 0:
-            regions.append(
-                (
-                    "mixed-data",
-                    "mixed_region_loop",
-                    "g_mixed_region_pool",
-                    "CONFIG_MIXED_REGION_POOL_BYTES",
-                    "CONFIG_MIXED_REGION_PAGE_COUNT",
-                    "CONFIG_MIXED_REGION_NODE_COUNT",
-                    "CONFIG_MIXED_REGION_REPS",
-                )
+def build_attached_data_slot(module_key: str, args: argparse.Namespace, seed: int, instruction_units: int, region_reps: int) -> dict:
+    pool_nodes = max(
+        0,
+        int(
+            getattr(
+                args,
+                f"{module_key}_data_pool_nodes",
+                0,
             )
-        else:
-            regions.append(
-                (
-                    "mixed-data",
-                    f"mixed_region_loop_{slot_id}",
-                    f"g_mixed_region_{slot_id}_pool",
-                    f"CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES",
-                    f"CONFIG_MIXED_REGION_{slot_id}_PAGE_COUNT",
-                    f"CONFIG_MIXED_REGION_{slot_id}_NODE_COUNT",
-                    f"CONFIG_MIXED_REGION_{slot_id}_REPS",
-                )
+            or 0
+        ),
+    )
+    nodes_per_page = MIXED_REGION.normalize_nodes_per_page(int(getattr(args, f"{module_key}_data_nodes_per_page", 8)))
+    data_mode = MIXED_REGION.normalize_data_mode(str(getattr(args, f"{module_key}_data_mode", "linear")))
+    stride_nodes = MIXED_REGION.normalize_stride(
+        int(
+            getattr(
+                args,
+                f"{module_key}_data_stride_nodes",
+                getattr(args, f"{module_key}_data_stride_lines", 1),
             )
+        )
+    )
+    stride_pages = MIXED_REGION.normalize_stride(int(getattr(args, f"{module_key}_data_stride_pages", 1)))
+    ldr_per_unit = MIXED_REGION.normalize_ldr_count_per_unit(int(getattr(args, f"{module_key}_fusion_ldr_per_unit", 0)))
+    pages = MIXED_REGION.normalize_pages(int(getattr(args, f"{module_key}_data_pages", 0)))
+    if pool_nodes > 0:
+        pages = max(pages, (pool_nodes + nodes_per_page - 1) // nodes_per_page)
+    else:
+        pool_nodes = pages * nodes_per_page
 
+    slot = {
+        "pool_nodes": pool_nodes,
+        "pages": pages,
+        "nodes_per_page": nodes_per_page,
+        "data_mode": data_mode,
+        "stride_nodes": stride_nodes,
+        "stride_lines": stride_nodes,
+        "stride_pages": stride_pages,
+        "ldr_per_unit": ldr_per_unit,
+        "instruction_units": max(0, int(instruction_units)),
+        "region_reps": max(0, int(region_reps)),
+    }
+
+    slot["loads_per_call"] = slot["instruction_units"] * ldr_per_unit
+    if pages <= 0 or slot["loads_per_call"] <= 0 or slot["region_reps"] <= 0:
+        slot["offsets"] = []
+        slot["node_count"] = 0
+        slot["pool_bytes"] = 0
+        return slot
+
+    offsets = MIXED_REGION.build_pointer_offsets(
+        pages,
+        nodes_per_page,
+        data_mode,
+        seed,
+        stride_lines=stride_nodes,
+        stride_pages=stride_pages,
+        nodes_per_page=nodes_per_page,
+        stride_nodes=stride_nodes,
+    )
+    slot["offsets"] = offsets
+    slot["node_count"] = len(offsets)
+    slot["pool_bytes"] = pages * 4096
+    return slot
+
+
+def emit_attached_data_alloc_calls(attached_data_slots) -> str:
+    calls = []
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        if slot["pool_bytes"] <= 0:
+            continue
+        calls.append(
+            emit_memory_allocation_call(
+                spec["label"],
+                f"g_{spec["prefix"]}_pool",
+                f"CONFIG_{spec["key"].upper()}_ATTACHED_POOL_BYTES",
+                4096,
+            )
+        )
+    return "".join(calls)
+
+
+def emit_memory_layout_printer(attached_data_slots) -> str:
+    regions = []
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        regions.append(
+            (
+                "attached-data",
+                spec["label"],
+                f"g_{spec["prefix"]}_pool",
+                f"CONFIG_{spec["key"].upper()}_ATTACHED_POOL_BYTES",
+                f"CONFIG_{spec["key"].upper()}_ATTACHED_PAGE_COUNT",
+                f"CONFIG_{spec["key"].upper()}_ATTACHED_NODE_COUNT",
+                f"CONFIG_{spec["key"].upper()}_ATTACHED_REPS",
+            )
+        )
     entries = "".join(
         (
             f'        {{"{kind}", "{name}", {base}, (uint64_t)({bytes_macro}), '
@@ -519,30 +312,19 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
         for kind, name, base, bytes_macro, pages_macro, nodes_macro, reps_macro in regions
     )
     code_regions = []
-    for slot in mixed_region_slots:
-        if slot["size"] <= 0 or slot["pages"] <= 0:
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        if slot["loads_per_call"] <= 0 or slot["pool_bytes"] <= 0:
             continue
-        slot_id = slot["slot_id"]
-        if slot_id == 0:
-            code_regions.append(
-                (
-                    "mixed-code",
-                    "mixed_region_loop",
-                    "mixed_region_kernel",
-                    "CONFIG_MIXED_REGION_SIZE",
-                    "CONFIG_MIXED_REGION_LDR_COUNT_PER_UNIT",
-                    "CONFIG_MIXED_REGION_REPS",
-                )
-            )
-            continue
+        key_upper = spec["key"].upper()
         code_regions.append(
             (
-                "mixed-code",
-                f"mixed_region_loop_{slot_id}",
-                f"mixed_region_{slot_id}_kernel",
-                f"CONFIG_MIXED_REGION_{slot_id}_SIZE",
-                f"CONFIG_MIXED_REGION_{slot_id}_LDR_COUNT_PER_UNIT",
-                f"CONFIG_MIXED_REGION_{slot_id}_REPS",
+                "attached-code",
+                spec["label"],
+                f"{spec["prefix"]}_burst",
+                f"CONFIG_{key_upper}_ATTACHED_INSTR_BYTES",
+                f"CONFIG_{key_upper}_ATTACHED_LDR_PER_UNIT",
+                f"CONFIG_{key_upper}_ATTACHED_REPS",
             )
         )
 
@@ -605,26 +387,62 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
         "    qsort(code_regions, code_region_count, sizeof(code_regions[0]), compare_code_region_info);\n"
         "    uint64_t total_data_bytes = 0;\n"
         "    size_t active_regions = 0;\n"
-        "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
-        "        if (regions[idx].bytes == 0 || regions[idx].reps == 0) continue;\n"
-        "        total_data_bytes += regions[idx].bytes;\n"
-        "        ++active_regions;\n"
-        "    }\n"
-        "    puts(\"===== memory layout =====\");\n"
-        "    printf(\"iters=%\" PRIu64 \" active_data_regions=%zu total_data_bytes=%\" PRIu64 \"\\n\", iters, active_regions, total_data_bytes);\n"
+        "    uintptr_t active_start = UINTPTR_MAX;\n"
+        "    uintptr_t active_end = 0u;\n"
         "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
         "        if (regions[idx].bytes == 0 || regions[idx].reps == 0) continue;\n"
         "        uintptr_t start = (uintptr_t)regions[idx].base;\n"
         "        uintptr_t end = start + (uintptr_t)regions[idx].bytes;\n"
-        "        printf(\"data_region kind=%s name=%s start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" bytes=%\" PRIu64 \" pages=%\" PRIu64 \" nodes=%\" PRIu64 \" reps=%\" PRIu64 \"\\n\",\n"
-        "               regions[idx].kind,\n"
-        "               regions[idx].name,\n"
-        "               start,\n"
-        "               end,\n"
-        "               regions[idx].bytes,\n"
-        "               regions[idx].pages,\n"
-        "               regions[idx].nodes,\n"
-        "               regions[idx].reps);\n"
+        "        if (start < active_start) active_start = start;\n"
+        "        if (end > active_end) active_end = end;\n"
+        "        total_data_bytes += regions[idx].bytes;\n"
+        "        ++active_regions;\n"
+        "    }\n"
+        "    puts(\"===== memory layout =====\");\n"
+        "    printf(\"iters=%\" PRIu64 \" active_data_regions=%zu total_data_bytes=%\" PRIu64 \" allocator=%s advice=%s arena_gap_bytes=%\" PRIu64 \" arena_bytes=%\" PRIu64 \" arena_hint=0x%\" PRIx64 \" prefault=%u warmup_iters=%\" PRIu64 \"\\n\",\n"
+        "           iters,\n"
+        "           active_regions,\n"
+        "           total_data_bytes,\n"
+        "           CONFIG_MEMORY_ALLOCATOR_STR,\n"
+        "           CONFIG_MEMORY_ADVICE_STR,\n"
+        "           (uint64_t)CONFIG_MEMORY_ARENA_GAP_BYTES,\n"
+        "           (uint64_t)CONFIG_MEMORY_ARENA_BYTES,\n"
+        "           (uint64_t)CONFIG_MEMORY_ARENA_HINT,\n"
+        "           (unsigned)CONFIG_MEMORY_PREFAULT,\n"
+        "           (uint64_t)CONFIG_WARMUP_ITERS);\n"
+        "    if (strcmp(CONFIG_MEMORY_ALLOCATOR_STR, \"arena\") == 0 && active_regions > 0 && active_start != UINTPTR_MAX) {\n"
+        "        printf(\"arena_span start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" span_bytes=%\" PRIu64 \" mapped_bytes=%\" PRIu64 \"\\n\",\n"
+        "               active_start,\n"
+        "               active_end,\n"
+        "               (uint64_t)(active_end - active_start),\n"
+        "               (uint64_t)CONFIG_MEMORY_ARENA_BYTES);\n"
+        "    }\n"
+        "    for (size_t idx = 0; idx < region_count; ++idx) {\n"
+        "        if (regions[idx].bytes == 0 || regions[idx].reps == 0) continue;\n"
+        "        uintptr_t start = (uintptr_t)regions[idx].base;\n"
+        "        uintptr_t end = start + (uintptr_t)regions[idx].bytes;\n"
+        "        if (strcmp(CONFIG_MEMORY_ALLOCATOR_STR, \"arena\") == 0 && active_start != UINTPTR_MAX) {\n"
+        "            printf(\"data_region kind=%s name=%s start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" bytes=%\" PRIu64 \" pages=%\" PRIu64 \" nodes=%\" PRIu64 \" reps=%\" PRIu64 \" arena_off=0x%\" PRIxPTR \"\\n\",\n"
+        "                   regions[idx].kind,\n"
+        "                   regions[idx].name,\n"
+        "                   start,\n"
+        "                   end,\n"
+        "                   regions[idx].bytes,\n"
+        "                   regions[idx].pages,\n"
+        "                   regions[idx].nodes,\n"
+        "                   regions[idx].reps,\n"
+        "                   (uintptr_t)(start - active_start));\n"
+        "        } else {\n"
+        "            printf(\"data_region kind=%s name=%s start=0x%\" PRIxPTR \" end=0x%\" PRIxPTR \" bytes=%\" PRIu64 \" pages=%\" PRIu64 \" nodes=%\" PRIu64 \" reps=%\" PRIu64 \"\\n\",\n"
+        "                   regions[idx].kind,\n"
+        "                   regions[idx].name,\n"
+        "                   start,\n"
+        "                   end,\n"
+        "                   regions[idx].bytes,\n"
+        "                   regions[idx].pages,\n"
+        "                   regions[idx].nodes,\n"
+        "                   regions[idx].reps);\n"
+        "        }\n"
         "    }\n"
         "    for (size_t idx = 0; idx < code_region_count; ++idx) {\n"
         "        if (code_regions[idx].payload_bytes == 0) continue;\n"
@@ -648,17 +466,109 @@ def emit_memory_layout_printer(mixed_region_slots) -> str:
 
 def emit_memory_region_allocator() -> str:
     return (
+        "static uint8_t *g_memory_arena_base = NULL;\n"
+        "static uint64_t g_memory_arena_size = 0;\n"
+        "static uint64_t g_memory_arena_cursor = 0;\n\n"
+        "static uint64_t round_up_u64(uint64_t value, uint64_t align) {\n"
+        "    if (align <= 1u) return value;\n"
+        "    uint64_t rem = value % align;\n"
+        "    return rem == 0u ? value : value + (align - rem);\n"
+        "}\n\n"
+        "static void prefault_memory_region(void *ptr, uint64_t bytes) {\n"
+        "    if (!ptr || bytes == 0 || !CONFIG_MEMORY_PREFAULT) return;\n"
+        "    volatile uint8_t *cursor = (volatile uint8_t *)ptr;\n"
+        "    const uint64_t page_bytes = 4096u;\n"
+        "    for (uint64_t off = 0; off < bytes; off += page_bytes) {\n"
+        "        cursor[off] = 0;\n"
+        "    }\n"
+        "    cursor[bytes - 1u] = 0;\n"
+        "}\n\n"
+        "static void apply_memory_advice(void *ptr, uint64_t bytes, const char *name) {\n"
+        "    if (!ptr || bytes == 0) return;\n"
+        "#if defined(__linux__)\n"
+        "    int advice = 0;\n"
+        "    const uintptr_t page_bytes = 4096u;\n"
+        "    uintptr_t start = ((uintptr_t)ptr) & ~(page_bytes - 1u);\n"
+        "    uintptr_t end = round_up_u64((uint64_t)((uintptr_t)ptr + bytes), page_bytes);\n"
+        "    size_t advise_len = (size_t)(end - start);\n"
+        "    if (strcmp(CONFIG_MEMORY_ADVICE_STR, \"random\") == 0) {\n"
+        "#ifdef MADV_RANDOM\n"
+        "        advice = MADV_RANDOM;\n"
+        "#endif\n"
+        "    } else if (strcmp(CONFIG_MEMORY_ADVICE_STR, \"sequential\") == 0) {\n"
+        "#ifdef MADV_SEQUENTIAL\n"
+        "        advice = MADV_SEQUENTIAL;\n"
+        "#endif\n"
+        "    } else if (strcmp(CONFIG_MEMORY_ADVICE_STR, \"hugepage\") == 0) {\n"
+        "#ifdef MADV_HUGEPAGE\n"
+        "        advice = MADV_HUGEPAGE;\n"
+        "#endif\n"
+        "    } else if (strcmp(CONFIG_MEMORY_ADVICE_STR, \"nohugepage\") == 0) {\n"
+        "#ifdef MADV_NOHUGEPAGE\n"
+        "        advice = MADV_NOHUGEPAGE;\n"
+        "#endif\n"
+        "    }\n"
+        "    if (advice != 0) {\n"
+        "        int rc = madvise((void *)start, advise_len, advice);\n"
+        "        if (rc != 0) {\n"
+        "            fprintf(stderr, \"[WARN] madvise failed for %s advice=%s start=0x%\" PRIxPTR \" len=%zu errno=%d\\n\", name, CONFIG_MEMORY_ADVICE_STR, start, advise_len, errno);\n"
+        "        }\n"
+        "    }\n"
+        "#else\n"
+        "    (void)name;\n"
+        "#endif\n"
+        "}\n\n"
+        "static bool ensure_memory_arena(void) {\n"
+        "    if (strcmp(CONFIG_MEMORY_ALLOCATOR_STR, \"arena\") != 0) return true;\n"
+        "    if (g_memory_arena_base != NULL) return true;\n"
+        "#if defined(__linux__)\n"
+        "    if (CONFIG_MEMORY_ARENA_BYTES == 0u) return true;\n"
+        "    void *hint = CONFIG_MEMORY_ARENA_HINT == 0u ? NULL : (void *)(uintptr_t)CONFIG_MEMORY_ARENA_HINT;\n"
+        "    void *base = mmap(hint, (size_t)CONFIG_MEMORY_ARENA_BYTES, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
+        "    if (base == MAP_FAILED) {\n"
+        "        fprintf(stderr, \"[ERROR] mmap arena failed bytes=%\" PRIu64 \" hint=0x%\" PRIx64 \" errno=%d\\n\", (uint64_t)CONFIG_MEMORY_ARENA_BYTES, (uint64_t)CONFIG_MEMORY_ARENA_HINT, errno);\n"
+        "        return false;\n"
+        "    }\n"
+        "    g_memory_arena_base = (uint8_t *)base;\n"
+        "    g_memory_arena_size = (uint64_t)CONFIG_MEMORY_ARENA_BYTES;\n"
+        "    g_memory_arena_cursor = 0u;\n"
+        "    return true;\n"
+        "#else\n"
+        "    fprintf(stderr, \"[WARN] arena allocator requested but mmap arena is only implemented on linux; falling back to posix allocator\\n\");\n"
+        "    return true;\n"
+        "#endif\n"
+        "}\n\n"
         "static bool allocate_memory_region(void **ptr, uint64_t bytes, size_t alignment, const char *name) {\n"
         "    if (bytes == 0) return true;\n"
         "    if (bytes > (uint64_t)((size_t)-1)) {\n"
         "        fprintf(stderr, \"[ERROR] %s bytes=%\" PRIu64 \" exceeds size_t max\\n\", name, bytes);\n"
         "        return false;\n"
         "    }\n"
+        "    *ptr = NULL;\n"
+        "    if (strcmp(CONFIG_MEMORY_ALLOCATOR_STR, \"arena\") == 0) {\n"
+        "        if (!ensure_memory_arena()) return false;\n"
+        "#if defined(__linux__)\n"
+        "        if (g_memory_arena_base != NULL) {\n"
+        "            uint64_t offset = round_up_u64(g_memory_arena_cursor, (uint64_t)alignment);\n"
+        "            if (offset + bytes > g_memory_arena_size) {\n"
+        "                fprintf(stderr, \"[ERROR] arena overflow for %s need=%\" PRIu64 \" offset=%\" PRIu64 \" arena=%\" PRIu64 \"\\n\", name, bytes, offset, g_memory_arena_size);\n"
+        "                return false;\n"
+        "            }\n"
+        "            *ptr = (void *)(g_memory_arena_base + offset);\n"
+        "            g_memory_arena_cursor = offset + bytes + (uint64_t)CONFIG_MEMORY_ARENA_GAP_BYTES;\n"
+        "            apply_memory_advice(*ptr, bytes, name);\n"
+        "            prefault_memory_region(*ptr, bytes);\n"
+        "            return true;\n"
+        "        }\n"
+        "#endif\n"
+        "    }\n"
         "    int rc = posix_memalign(ptr, alignment, (size_t)bytes);\n"
         "    if (rc != 0 || *ptr == NULL) {\n"
         "        fprintf(stderr, \"[ERROR] failed to allocate %s bytes=%\" PRIu64 \" align=%zu rc=%d\\n\", name, bytes, alignment, rc);\n"
         "        return false;\n"
         "    }\n"
+        "    apply_memory_advice(*ptr, bytes, name);\n"
+        "    prefault_memory_region(*ptr, bytes);\n"
         "    return true;\n"
         "}\n\n"
     )
@@ -671,66 +581,9 @@ def emit_memory_allocation_call(name: str, symbol: str, bytes_macro: str, align:
     )
 
 
-def emit_memory_allocation_calls(mixed_region_slots) -> str:
-    calls = [
-        emit_memory_allocation_call("data_stream", "g_data_stream_buf", "CONFIG_DATA_STREAM_SIZE", 64),
-        emit_memory_allocation_call(
-            "data_pointer_chase",
-            "g_data_pointer_chase_pool",
-            "CONFIG_DATA_POINTER_CHASE_POOL_BYTES",
-            4096,
-        ),
-        emit_memory_allocation_call(
-            "data_page_stride",
-            "g_data_page_stride_buf",
-            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
-            4096,
-        ),
-        emit_memory_allocation_call(
-            "data_indirect_gather",
-            "g_data_indirect_gather_pool",
-            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
-            4096,
-        ),
-        emit_memory_allocation_call(
-            "data_hot_stride",
-            "g_data_hot_stride_buf",
-            "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES",
-            64,
-        ),
-        emit_memory_allocation_call(
-            "data_cold_stride",
-            "g_data_cold_stride_buf",
-            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
-            4096,
-        ),
-        emit_memory_allocation_call(
-            "data_tlb_indirect",
-            "g_data_tlb_indirect_buf",
-            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
-            4096,
-        ),
-    ]
-    for slot in mixed_region_slots:
-        slot_id = slot["slot_id"]
-        if slot_id == 0:
-            calls.append(
-                emit_memory_allocation_call(
-                    "mixed_region_loop",
-                    "g_mixed_region_pool",
-                    "CONFIG_MIXED_REGION_POOL_BYTES",
-                    4096,
-                )
-            )
-            continue
-        calls.append(
-            emit_memory_allocation_call(
-                f"mixed_region_loop_{slot_id}",
-                f"g_mixed_region_{slot_id}_pool",
-                f"CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES",
-                4096,
-            )
-        )
+def emit_memory_allocation_calls(attached_data_slots) -> str:
+    calls = []
+    calls.append(emit_attached_data_alloc_calls(attached_data_slots))
     return "".join(calls)
 
 
@@ -743,118 +596,20 @@ def generate(args: argparse.Namespace) -> str:
     hot_l1_branch_pairs_per_unit = max(0, int(args.hot_l1_branch_pairs_per_unit))
     hot_l1_region_reps = 0 if hot_l1_size == 0 else max(1, args.hot_l1_region_reps)
     hot_l1_pos = args.hot_l1_pos
-    hot_l2_size = max(0, args.hot_l2_size)
-    hot_l2_region_reps = 0 if hot_l2_size == 0 else max(1, args.hot_l2_region_reps)
-    hot_l2_pos = args.hot_l2_pos
-    mixed_region_size = MIXED_REGION.normalize_size_bytes(args.mixed_region_size)
-    mixed_region_ldr_count_per_unit = MIXED_REGION.normalize_ldr_count_per_unit(
-        args.mixed_region_ldr_count_per_unit
-    )
-    mixed_region_data_mode = MIXED_REGION.normalize_data_mode(args.mixed_region_data_mode)
-    mixed_region_pages = MIXED_REGION.normalize_pages(args.mixed_region_pages)
-    mixed_region_nodes_per_page = MIXED_REGION.normalize_nodes_per_page(
-        args.mixed_region_lines_per_page
-        if args.mixed_region_nodes_per_page is None
-        else args.mixed_region_nodes_per_page
-    )
-    mixed_region_stride_lines = MIXED_REGION.normalize_stride(args.mixed_region_stride_lines)
-    mixed_region_stride_pages = MIXED_REGION.normalize_stride(args.mixed_region_stride_pages)
-    mixed_region_region_reps = (
-        0
-        if mixed_region_size == 0 or mixed_region_pages == 0
-        else max(1, args.mixed_region_region_reps)
-    )
-    mixed_region_pos = args.mixed_region_pos
-    mixed_region_slots = [
-        {
-            "slot_id": 0,
-            "prefix": "mixed_region",
-            "label": "mixed_region_loop",
-            "size": mixed_region_size,
-            "ldr_count_per_unit": mixed_region_ldr_count_per_unit,
-            "data_mode": mixed_region_data_mode,
-            "pages": mixed_region_pages,
-            "lines_per_page": mixed_region_nodes_per_page,
-            "nodes_per_page": mixed_region_nodes_per_page,
-            "stride_lines": mixed_region_stride_lines,
-            "stride_pages": mixed_region_stride_pages,
-            "region_reps": mixed_region_region_reps,
-            "pos": mixed_region_pos,
-        }
-    ]
-    for slot_id, raw_slot in enumerate(getattr(args, "mixed_region_extra_slots", []), start=1):
-        slot_size = MIXED_REGION.normalize_size_bytes(raw_slot.get("size", 0))
-        slot_ldr_count = MIXED_REGION.normalize_ldr_count_per_unit(raw_slot.get("ldr_count_per_unit", 0))
-        slot_data_mode = MIXED_REGION.normalize_data_mode(raw_slot.get("data_mode", "linear"))
-        slot_pages = MIXED_REGION.normalize_pages(raw_slot.get("pages", 1))
-        slot_nodes_per_page = MIXED_REGION.normalize_nodes_per_page(
-            raw_slot.get("nodes_per_page", raw_slot.get("lines_per_page", 8))
-        )
-        slot_stride_lines = MIXED_REGION.normalize_stride(raw_slot.get("stride_lines", 1))
-        slot_stride_pages = MIXED_REGION.normalize_stride(raw_slot.get("stride_pages", 1))
-        slot_region_reps = 0 if slot_size == 0 or slot_pages == 0 else max(1, raw_slot.get("region_reps", 0))
-        mixed_region_slots.append(
-            {
-                "slot_id": slot_id,
-                "prefix": f"mixed_region_{slot_id}",
-                "label": f"mixed_region_loop_{slot_id}",
-                "size": slot_size,
-                "ldr_count_per_unit": slot_ldr_count,
-                "data_mode": slot_data_mode,
-                "pages": slot_pages,
-                "lines_per_page": slot_nodes_per_page,
-                "nodes_per_page": slot_nodes_per_page,
-                "stride_lines": slot_stride_lines,
-                "stride_pages": slot_stride_pages,
-                "region_reps": slot_region_reps,
-                "pos": raw_slot.get("pos", mixed_region_pos + slot_id),
-            }
-        )
-    mixed_region_enabled = any(slot["size"] > 0 and slot["pages"] > 0 for slot in mixed_region_slots)
-    data_stream_size = MODULES.data_stream.normalize_size_bytes(args.data_stream_size)
-    data_stream_stride = MODULES.data_stream.normalize_stride_bytes(data_stream_size, args.data_stream_stride)
-    data_stream_region_reps = 0 if data_stream_size == 0 else max(1, args.data_stream_region_reps)
-    data_stream_pos = args.data_stream_pos
-    data_pointer_chase_pages = MODULES.data_pointer_chase.normalize_page_count(args.data_pointer_chase_pages)
-    data_pointer_chase_lines_per_page = MODULES.data_pointer_chase.normalize_lines_per_page(
-        args.data_pointer_chase_lines_per_page
-    )
-    data_pointer_chase_region_reps = 0 if data_pointer_chase_pages == 0 else max(1, args.data_pointer_chase_region_reps)
-    data_pointer_chase_pos = args.data_pointer_chase_pos
-    data_page_stride_pages = MODULES.data_page_stride.normalize_page_count(args.data_page_stride_pages)
-    data_page_stride_line_index = MODULES.data_page_stride.normalize_line_index(args.data_page_stride_line_index)
-    data_page_stride_page_stride = MODULES.data_page_stride.normalize_cycle_stride(
-        data_page_stride_pages,
-        args.data_page_stride_page_stride,
-    )
-    data_page_stride_region_reps = 0 if data_page_stride_pages == 0 else max(1, args.data_page_stride_region_reps)
-    data_page_stride_pos = args.data_page_stride_pos
-    data_indirect_gather_pages = MODULES.data_indirect_gather.normalize_page_count(args.data_indirect_gather_pages)
-    data_indirect_gather_lines_per_page = MODULES.data_indirect_gather.normalize_lines_per_page(
-        args.data_indirect_gather_lines_per_page
-    )
-    data_indirect_gather_region_reps = (
-        0 if data_indirect_gather_pages == 0 else max(1, args.data_indirect_gather_region_reps)
-    )
-    data_indirect_gather_pos = args.data_indirect_gather_pos
-    data_hot_stride_access_count = MODULES.data_hot_stride.normalize_access_count(args.data_hot_stride_access_count)
-    data_hot_stride_stride = MODULES.data_hot_stride.normalize_word_stride_bytes(args.data_hot_stride_stride)
-    data_hot_stride_region_reps = 0 if data_hot_stride_access_count == 0 else max(1, args.data_hot_stride_region_reps)
-    data_hot_stride_pos = args.data_hot_stride_pos
-    data_cold_stride_access_count = MODULES.data_cold_stride.normalize_access_count(args.data_cold_stride_access_count)
-    data_cold_stride_stride = MODULES.data_cold_stride.normalize_word_stride_bytes(args.data_cold_stride_stride)
-    data_cold_stride_region_reps = (
-        0 if data_cold_stride_access_count == 0 else max(1, args.data_cold_stride_region_reps)
-    )
-    data_cold_stride_pos = args.data_cold_stride_pos
-    data_tlb_indirect_pages = MODULES.data_tlb_indirect.normalize_page_count(args.data_tlb_indirect_pages)
-    data_tlb_indirect_line_index = MODULES.data_tlb_indirect.normalize_line_index(args.data_tlb_indirect_line_index)
-    data_tlb_indirect_region_reps = (
-        0 if data_tlb_indirect_pages == 0 else max(1, args.data_tlb_indirect_region_reps)
-    )
-    data_tlb_indirect_pos = args.data_tlb_indirect_pos
 
     fetch_total_blocks = max(0, args.fetch_blocks)
+
+    memory_allocator = str(args.memory_allocator)
+    if memory_allocator not in MEMORY_ALLOCATOR_CHOICES:
+        raise ValueError(f"unsupported memory allocator: {memory_allocator}")
+    memory_advice = str(args.memory_advice)
+    if memory_advice not in MEMORY_ADVICE_CHOICES:
+        raise ValueError(f"unsupported memory advice: {memory_advice}")
+    memory_arena_gap_bytes = max(0, int(args.memory_arena_gap_bytes))
+    memory_arena_hint = max(0, int(args.memory_arena_hint))
+    memory_prefault = 1 if int(args.memory_prefault) else 0
+    warmup_iters = max(0, int(args.warmup_iters))
+
     fetch_region_reps = 0 if fetch_total_blocks == 0 else max(1, args.fetch_region_reps)
     fetch_branch_pairs_per_block = max(0, int(args.fetch_branch_pairs_per_block))
     fetch_block_slots = max(1, int(args.fetch_block_slots))
@@ -867,43 +622,29 @@ def generate(args: argparse.Namespace) -> str:
     itlb_mode = args.itlb_mode
     itlb_pos = args.itlb_pos
 
-    call_ret_funcs = max(0, args.call_ret_funcs)
-    call_ret_lines_per_func = MODULES.call_ret_chain.normalize_lines_per_func(args.call_ret_lines_per_func)
-    call_ret_region_reps = 0 if call_ret_funcs == 0 else max(1, args.call_ret_region_reps)
-    call_ret_pos = args.call_ret_pos
-
-    plt_stub_funcs = max(0, args.plt_stub_funcs)
-    plt_stub_region_reps = 0 if plt_stub_funcs == 0 else max(1, args.plt_stub_region_reps)
-    plt_stub_pos = args.plt_stub_pos
-
-    indirect_target_count = max(0, args.indirect_target_count)
-    indirect_target_block_align = max(64, args.indirect_target_block_align)
-    indirect_target_region_reps = 0 if indirect_target_count == 0 else max(1, args.indirect_target_region_reps)
-    indirect_target_pos = args.indirect_target_pos
+    attached_data_slots = {
+        "hot_l1": build_attached_data_slot("hot_l1", args, args.seed ^ 0x16A3B1C5, hot_l1_size / 64, hot_l1_region_reps),
+        "fetch": build_attached_data_slot("fetch", args, args.seed ^ 0x27D4EB2F, fetch_total_blocks, fetch_region_reps),
+        "itlb": build_attached_data_slot("itlb", args, args.seed ^ 0x38F112D9, itlb_funcs * itlb_lines_per_page, itlb_region_reps),
+        "main": build_attached_data_slot("main", args, args.seed ^ 0x49A77C63, main_total_blocks, main_region_reps),
+    }
+    attached_data_enabled = any(
+        slot["pool_bytes"] > 0 and slot["loads_per_call"] > 0
+        for slot in attached_data_slots.values()
+    )
 
     if (
         main_total_blocks == 0
         and fetch_total_blocks == 0
         and hot_l1_size == 0
-        and hot_l2_size == 0
-        and not mixed_region_enabled
-        and data_stream_size == 0
-        and data_pointer_chase_pages == 0
-        and data_page_stride_pages == 0
-        and data_indirect_gather_pages == 0
-        and data_hot_stride_access_count == 0
-        and data_cold_stride_access_count == 0
-        and data_tlb_indirect_pages == 0
         and itlb_funcs == 0
-        and call_ret_funcs == 0
-        and plt_stub_funcs == 0
-        and indirect_target_count == 0
     ):
-        raise ValueError("At least one frontend or data-cache module must be non-zero")
+        raise ValueError("At least one module must be non-zero")
 
     main_block_align = max(64, args.block_align)
     fetch_block_align = max(64, args.fetch_block_align)
     hot_l1_align = 64
+    hot_l2_size = 0
     hot_l2_align = 64
 
     if main_layout in ("page_shuffle", "in_page_shuffle") and (4096 % main_block_align != 0):
@@ -934,85 +675,23 @@ def generate(args: argparse.Namespace) -> str:
     itlb_phys_order = MODULES.tlb_region.shuffled_itlb_phys_order(itlb_funcs, args.seed ^ 0x9E3779B1)
     itlb_exec_order = MODULES.tlb_region.constrained_itlb_exec_order(itlb_phys_order, args.seed ^ 0x85EBCA77, 4)
     itlb_next_map, itlb_chain_pos_map = MODULES.tlb_region.build_chain_maps(itlb_funcs, itlb_exec_order, itlb_mode)
-    data_pointer_chase_offsets = MODULES.data_pointer_chase.build_pointer_chase_offsets(
-        data_pointer_chase_pages,
-        data_pointer_chase_lines_per_page,
-        args.seed ^ 0x4CF5AD43,
-    )
-    data_page_stride_offsets = MODULES.data_page_stride.build_page_stride_offsets(
-        data_page_stride_pages,
-        data_page_stride_page_stride,
-        data_page_stride_line_index,
-        args.seed ^ 0x7F4A7C15,
-    )
-    data_indirect_gather_offsets = MODULES.data_indirect_gather.build_pointer_chase_offsets(
-        data_indirect_gather_pages,
-        data_indirect_gather_lines_per_page,
-        args.seed ^ 0xA24BAED4,
-    )
-    data_indirect_gather_node_count = len(data_indirect_gather_offsets)
-    data_indirect_gather_index_stride = MODULES.data_indirect_gather.normalize_cycle_stride(
-        data_indirect_gather_node_count,
-        args.data_indirect_gather_index_stride,
-    )
-    data_hot_stride_offsets = MODULES.data_hot_stride.build_stride_offsets(
-        data_hot_stride_access_count,
-        data_hot_stride_stride,
-    )
-    data_hot_stride_buffer_bytes = 0 if not data_hot_stride_offsets else data_hot_stride_offsets[-1] + 4
-    data_cold_stride_offsets = MODULES.data_cold_stride.build_stride_offsets(
-        data_cold_stride_access_count,
-        data_cold_stride_stride,
-    )
-    data_cold_stride_buffer_bytes = 0 if not data_cold_stride_offsets else data_cold_stride_offsets[-1] + 4
-    data_tlb_indirect_offsets = MODULES.data_tlb_indirect.build_tlb_indirect_offsets(
-        data_tlb_indirect_pages,
-        data_tlb_indirect_line_index,
-        args.seed ^ 0xC2B2AE35,
-    )
-    data_tlb_indirect_access_count = len(data_tlb_indirect_offsets)
-    data_tlb_indirect_pool_bytes = data_tlb_indirect_pages * 4096
-    mixed_region_offsets = MIXED_REGION.build_pointer_offsets(
-        mixed_region_pages,
-        mixed_region_nodes_per_page,
-        mixed_region_data_mode,
-        args.seed ^ 0xB5297A4D,
-        stride_lines=mixed_region_stride_lines,
-        stride_pages=mixed_region_stride_pages,
-        nodes_per_page=mixed_region_nodes_per_page,
-    )
-    mixed_region_node_count = len(mixed_region_offsets)
-    mixed_region_pool_bytes = mixed_region_pages * 4096
-    mixed_region_loads_per_call = (mixed_region_size // 64) * mixed_region_ldr_count_per_unit
-    for slot in mixed_region_slots[1:]:
-        slot["offsets"] = MIXED_REGION.build_pointer_offsets(
-            slot["pages"],
-            slot["nodes_per_page"],
-            slot["data_mode"],
-            args.seed ^ 0xB5297A4D ^ (slot["slot_id"] * 0x45D9F3B),
-            stride_lines=slot["stride_lines"],
-            stride_pages=slot["stride_pages"],
-            nodes_per_page=slot["nodes_per_page"],
-        )
-        slot["node_count"] = len(slot["offsets"])
-        slot["pool_bytes"] = slot["pages"] * 4096
-        slot["loads_per_call"] = (slot["size"] // 64) * slot["ldr_count_per_unit"]
 
-    call_ret_phys_order = MODULES.tlb_region.shuffled_itlb_phys_order(call_ret_funcs, args.seed ^ 0x165667B1)
-    call_ret_exec_order = MODULES.tlb_region.constrained_itlb_exec_order(
-        call_ret_phys_order,
-        args.seed ^ 0xD3A2646C,
-        4,
-    )
-    call_ret_next_map, _ = MODULES.tlb_region.build_chain_maps(call_ret_funcs, call_ret_exec_order, "chain")
+    arena_regions = [
+        *[(slot["pool_bytes"], 4096) for slot in attached_data_slots.values()],
+    ]
+    memory_arena_bytes = 0
+    for bytes_value, align_value in arena_regions:
+        if bytes_value <= 0:
+            continue
+        memory_arena_bytes += int(bytes_value) + int(align_value) + memory_arena_gap_bytes
+    if memory_arena_bytes > 0:
+        memory_arena_bytes += 4096
 
     hot_l1_insns = hot_l1_size // 4 if hot_l1_size > 0 else 0
-    hot_l2_insns = hot_l2_size // 4 if hot_l2_size > 0 else 0
 
     main_exec_samples = list(range(min(main_total_blocks, 8)))
     main_phys_samples = main_physical_order[: min(main_total_blocks, 8)]
     itlb_samples = itlb_exec_order[: min(itlb_funcs, 8)] if itlb_exec_order else []
-    call_ret_samples = call_ret_exec_order[: min(call_ret_funcs, 8)] if call_ret_exec_order else []
 
     main_indirect_blocks_per_chain = MODULES.block_loop.count_indirect_blocks(main_total_blocks, main_direct_run_len)
     fetch_indirect_blocks_per_chain = FETCH_AMPLIFIER.count_indirect_blocks(fetch_total_blocks, fetch_direct_run_len)
@@ -1023,115 +702,25 @@ def generate(args: argparse.Namespace) -> str:
     )
 
     hot_l1_entries_per_iter = hot_l1_region_reps
-    hot_l2_entries_per_iter = hot_l2_region_reps
-    mixed_region_accesses_per_iter = mixed_region_loads_per_call * mixed_region_region_reps
-    for slot in mixed_region_slots[1:]:
-        mixed_region_accesses_per_iter += slot["loads_per_call"] * slot["region_reps"]
-    data_stream_accesses_per_call = 0 if data_stream_size == 0 else ((data_stream_size - 1) // data_stream_stride) + 1
-    data_stream_accesses_per_iter = data_stream_accesses_per_call * data_stream_region_reps
-    data_pointer_chase_nodes = len(data_pointer_chase_offsets)
-    data_pointer_chase_accesses_per_iter = data_pointer_chase_nodes * data_pointer_chase_region_reps
-    data_page_stride_accesses_per_call = len(data_page_stride_offsets)
-    data_page_stride_accesses_per_iter = data_page_stride_accesses_per_call * data_page_stride_region_reps
-    data_indirect_gather_accesses_per_iter = data_indirect_gather_node_count * data_indirect_gather_region_reps
-    data_hot_stride_accesses_per_iter = data_hot_stride_access_count * data_hot_stride_region_reps
-    data_cold_stride_accesses_per_iter = data_cold_stride_access_count * data_cold_stride_region_reps
-    data_tlb_indirect_accesses_per_iter = data_tlb_indirect_access_count * data_tlb_indirect_region_reps
     itlb_calls_per_iter = itlb_region_reps if itlb_mode == "chain" else itlb_funcs * itlb_region_reps
-    call_ret_calls_per_iter = call_ret_region_reps
-    plt_stub_calls_per_iter = plt_stub_funcs * plt_stub_region_reps
-    indirect_target_calls_per_iter = indirect_target_count * indirect_target_region_reps
     main_block_entries_per_iter = main_total_blocks * main_region_reps
     fetch_block_entries_per_iter = fetch_total_blocks * fetch_region_reps
+    attached_data_accesses_per_iter = sum(
+        slot["loads_per_call"] * slot["region_reps"]
+        for slot in attached_data_slots.values()
+        if slot["pool_bytes"] > 0
+    )
 
     total_frontend_units_per_iter = (
         hot_l1_entries_per_iter
-        + hot_l2_entries_per_iter
-        + mixed_region_accesses_per_iter
-        + data_stream_accesses_per_iter
-        + data_pointer_chase_accesses_per_iter
-        + data_page_stride_accesses_per_iter
-        + data_indirect_gather_accesses_per_iter
-        + data_hot_stride_accesses_per_iter
-        + data_cold_stride_accesses_per_iter
-        + data_tlb_indirect_accesses_per_iter
+        + attached_data_accesses_per_iter
         + fetch_block_entries_per_iter
         + itlb_calls_per_iter
-        + call_ret_calls_per_iter
-        + plt_stub_calls_per_iter
-        + indirect_target_calls_per_iter
         + main_block_entries_per_iter
     )
 
     ordered_module_loops = [
         (hot_l1_pos, "hot_l1", "CONFIG_HOT_L1_REGION_REPS", "CONFIG_HOT_L1_SIZE > 0", "run_hot_l1_once();"),
-        (hot_l2_pos, "hot_l2", "CONFIG_HOT_L2_REGION_REPS", "CONFIG_HOT_L2_SIZE > 0", "run_hot_l2_once();"),
-        (
-            mixed_region_pos,
-            "mixed_region_loop",
-            "CONFIG_MIXED_REGION_REPS",
-            "CONFIG_MIXED_REGION_SIZE > 0 && CONFIG_MIXED_REGION_PAGE_COUNT > 0",
-            "run_mixed_region_once();",
-        ),
-        *[
-            (
-                slot["pos"],
-                slot["label"],
-                f"CONFIG_MIXED_REGION_{slot['slot_id']}_REPS",
-                f"CONFIG_MIXED_REGION_{slot['slot_id']}_SIZE > 0 && CONFIG_MIXED_REGION_{slot['slot_id']}_PAGE_COUNT > 0",
-                f"run_mixed_region_{slot['slot_id']}_once();",
-            )
-            for slot in mixed_region_slots[1:]
-        ],
-        (
-            data_stream_pos,
-            "data_stream",
-            "CONFIG_DATA_STREAM_REGION_REPS",
-            "CONFIG_DATA_STREAM_SIZE > 0",
-            "run_data_stream_once();",
-        ),
-        (
-            data_pointer_chase_pos,
-            "data_pointer_chase",
-            "CONFIG_DATA_POINTER_CHASE_REGION_REPS",
-            "CONFIG_DATA_POINTER_CHASE_PAGE_COUNT > 0",
-            "run_data_pointer_chase_once();",
-        ),
-        (
-            data_page_stride_pos,
-            "data_page_stride",
-            "CONFIG_DATA_PAGE_STRIDE_REGION_REPS",
-            "CONFIG_DATA_PAGE_STRIDE_PAGE_COUNT > 0",
-            "run_data_page_stride_once();",
-        ),
-        (
-            data_indirect_gather_pos,
-            "data_indirect_gather",
-            "CONFIG_DATA_INDIRECT_GATHER_REGION_REPS",
-            "CONFIG_DATA_INDIRECT_GATHER_PAGE_COUNT > 0",
-            "run_data_indirect_gather_once();",
-        ),
-        (
-            data_hot_stride_pos,
-            "data_hot_stride",
-            "CONFIG_DATA_HOT_STRIDE_REGION_REPS",
-            "CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT > 0",
-            "run_data_hot_stride_once();",
-        ),
-        (
-            data_cold_stride_pos,
-            "data_cold_stride",
-            "CONFIG_DATA_COLD_STRIDE_REGION_REPS",
-            "CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT > 0",
-            "run_data_cold_stride_once();",
-        ),
-        (
-            data_tlb_indirect_pos,
-            "data_tlb_indirect",
-            "CONFIG_DATA_TLB_INDIRECT_REGION_REPS",
-            "CONFIG_DATA_TLB_INDIRECT_PAGE_COUNT > 0",
-            "run_data_tlb_indirect_once();",
-        ),
         (
             fetch_pos,
             "fetch_amplifier",
@@ -1141,27 +730,6 @@ def generate(args: argparse.Namespace) -> str:
         ),
         (itlb_pos, "itlb", "CONFIG_ITLB_REGION_REPS", "CONFIG_ITLB_FUNCS > 0", "run_itlb_region_once();"),
         (
-            call_ret_pos,
-            "call_ret",
-            "CONFIG_CALL_RET_REGION_REPS",
-            "CONFIG_CALL_RET_FUNCS > 0",
-            "run_call_ret_chain_once();",
-        ),
-        (
-            plt_stub_pos,
-            "plt_stub",
-            "CONFIG_PLT_STUB_REGION_REPS",
-            "CONFIG_PLT_STUB_FUNCS > 0",
-            "run_plt_stub_chain_once();",
-        ),
-        (
-            indirect_target_pos,
-            "indirect_target",
-            "CONFIG_INDIRECT_TARGET_REGION_REPS",
-            "CONFIG_INDIRECT_TARGET_COUNT > 0",
-            "run_indirect_target_set_once();",
-        ),
-        (
             main_pos,
             "block_loop",
             "CONFIG_MAIN_REGION_REPS",
@@ -1169,6 +737,22 @@ def generate(args: argparse.Namespace) -> str:
             "run_block_loop_once();",
         ),
     ]
+    active_loop_names = set()
+    if hot_l1_size > 0 and hot_l1_region_reps > 0:
+        active_loop_names.add("hot_l1")
+    if fetch_total_blocks > 0 and fetch_region_reps > 0:
+        active_loop_names.add("fetch_amplifier")
+    if itlb_funcs > 0 and itlb_region_reps > 0:
+        active_loop_names.add("itlb")
+    if main_total_blocks > 0 and main_region_reps > 0:
+        active_loop_names.add("block_loop")
+
+    ordered_module_loops = [
+        item
+        for item in ordered_module_loops
+        if item[1] in active_loop_names
+    ]
+
     ordered_module_loops.sort(key=lambda item: (item[0], item[1]))
 
     out = []
@@ -1180,8 +764,12 @@ def generate(args: argparse.Namespace) -> str:
     out.append("#include <stdint.h>\n")
     out.append("#include <stdio.h>\n")
     out.append("#include <stdlib.h>\n")
+    out.append("#include <string.h>\n")
     out.append("#include <time.h>\n")
     out.append("#include <unistd.h>\n\n")
+    out.append("#if defined(__linux__)\n")
+    out.append("#include <sys/mman.h>\n")
+    out.append("#endif\n\n")
 
     out.append(f"#define CONFIG_HOT_L1_SIZE {hot_l1_size}u\n")
     out.append(f"#define CONFIG_HOT_L1_INSNS {hot_l1_insns}u\n")
@@ -1189,85 +777,20 @@ def generate(args: argparse.Namespace) -> str:
     out.append(f"#define CONFIG_HOT_L1_POS {hot_l1_pos}u\n")
     out.append(f"#define CONFIG_HOT_L1_ALIGN {hot_l1_align}u\n")
 
-    out.append(f"#define CONFIG_HOT_L2_SIZE {hot_l2_size}u\n")
-    out.append(f"#define CONFIG_HOT_L2_INSNS {hot_l2_insns}u\n")
-    out.append(f"#define CONFIG_HOT_L2_REGION_REPS {hot_l2_region_reps}u\n")
-    out.append(f"#define CONFIG_HOT_L2_POS {hot_l2_pos}u\n")
-    out.append(f"#define CONFIG_HOT_L2_ALIGN {hot_l2_align}u\n")
-
-    out.append(f"#define CONFIG_MIXED_REGION_SIZE {mixed_region_size}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_LDR_COUNT_PER_UNIT {mixed_region_ldr_count_per_unit}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_PAGE_COUNT {mixed_region_pages}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_NODES_PER_PAGE {mixed_region_nodes_per_page}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_LINES_PER_PAGE {mixed_region_nodes_per_page}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_STRIDE_LINES {mixed_region_stride_lines}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_STRIDE_PAGES {mixed_region_stride_pages}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_NODE_COUNT {mixed_region_node_count}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_POOL_BYTES {mixed_region_pool_bytes}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_REPS {mixed_region_region_reps}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_POS {mixed_region_pos}u\n")
-    out.append(f'#define CONFIG_MIXED_REGION_DATA_MODE_STR "{mixed_region_data_mode}"\n')
-    for slot in mixed_region_slots[1:]:
-        slot_id = slot["slot_id"]
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_SIZE {slot['size']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LDR_COUNT_PER_UNIT {slot['ldr_count_per_unit']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_PAGE_COUNT {slot['pages']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_NODES_PER_PAGE {slot['nodes_per_page']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_LINES_PER_PAGE {slot['nodes_per_page']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_STRIDE_LINES {slot['stride_lines']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_STRIDE_PAGES {slot['stride_pages']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_NODE_COUNT {slot['node_count']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_POOL_BYTES {slot['pool_bytes']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_REPS {slot['region_reps']}u\n")
-        out.append(f"#define CONFIG_MIXED_REGION_{slot_id}_POS {slot['pos']}u\n")
-        out.append(f'#define CONFIG_MIXED_REGION_{slot_id}_DATA_MODE_STR "{slot["data_mode"]}"\n')
-
-    out.append(f"#define CONFIG_DATA_STREAM_SIZE {data_stream_size}u\n")
-    out.append(f"#define CONFIG_DATA_STREAM_STRIDE {data_stream_stride}u\n")
-    out.append(f"#define CONFIG_DATA_STREAM_REGION_REPS {data_stream_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_STREAM_POS {data_stream_pos}u\n")
-
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_PAGE_COUNT {data_pointer_chase_pages}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_LINES_PER_PAGE {data_pointer_chase_lines_per_page}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_NODE_COUNT {len(data_pointer_chase_offsets)}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_POOL_BYTES {data_pointer_chase_pages * 4096}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_REGION_REPS {data_pointer_chase_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_POS {data_pointer_chase_pos}u\n")
-
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_PAGE_COUNT {data_page_stride_pages}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_PAGE_STRIDE {data_page_stride_page_stride}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_LINE_INDEX {data_page_stride_line_index}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_OFFSET_COUNT {len(data_page_stride_offsets)}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_POOL_BYTES {data_page_stride_pages * 4096}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_REGION_REPS {data_page_stride_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_POS {data_page_stride_pos}u\n")
-
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_PAGE_COUNT {data_indirect_gather_pages}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_LINES_PER_PAGE {data_indirect_gather_lines_per_page}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT {data_indirect_gather_node_count}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES {data_indirect_gather_pages * 4096}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_INDEX_STRIDE {data_indirect_gather_index_stride}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_REGION_REPS {data_indirect_gather_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_POS {data_indirect_gather_pos}u\n")
-
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT {data_hot_stride_access_count}u\n")
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_STRIDE {data_hot_stride_stride}u\n")
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES {data_hot_stride_buffer_bytes}u\n")
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_REGION_REPS {data_hot_stride_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_POS {data_hot_stride_pos}u\n")
-
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT {data_cold_stride_access_count}u\n")
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_STRIDE {data_cold_stride_stride}u\n")
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES {data_cold_stride_buffer_bytes}u\n")
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_REGION_REPS {data_cold_stride_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_POS {data_cold_stride_pos}u\n")
-
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_PAGE_COUNT {data_tlb_indirect_pages}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_LINE_INDEX {data_tlb_indirect_line_index}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_ACCESS_COUNT {data_tlb_indirect_access_count}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_POOL_BYTES {data_tlb_indirect_pool_bytes}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_REGION_REPS {data_tlb_indirect_region_reps}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_POS {data_tlb_indirect_pos}u\n")
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        key_upper = spec["key"].upper()
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_PAGE_COUNT {slot['pages']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_NODES_PER_PAGE {slot['nodes_per_page']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_NODE_COUNT {slot['node_count']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_STRIDE_LINES {slot['stride_lines']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_STRIDE_PAGES {slot['stride_pages']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_LDR_PER_UNIT {slot['ldr_per_unit']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_INSTR_UNITS {slot['instruction_units']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_INSTR_BYTES {slot['instruction_units'] * 64}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_POOL_BYTES {slot['pool_bytes']}u\n")
+        out.append(f"#define CONFIG_{key_upper}_ATTACHED_REPS {slot['region_reps']}u\n")
+        out.append(f'#define CONFIG_{key_upper}_ATTACHED_DATA_MODE_STR "{slot["data_mode"]}"\n')
 
     out.append(f"#define CONFIG_FETCH_TOTAL_BLOCKS {fetch_total_blocks}u\n")
     out.append(f"#define CONFIG_FETCH_BLOCK_ALIGN {fetch_block_align}u\n")
@@ -1286,53 +809,24 @@ def generate(args: argparse.Namespace) -> str:
     out.append(f"#define CONFIG_ITLB_POS {itlb_pos}u\n")
     out.append(f'#define CONFIG_ITLB_MODE_STR "{itlb_mode}"\n')
 
-    out.append(f"#define CONFIG_CALL_RET_FUNCS {call_ret_funcs}u\n")
-    out.append(f"#define CONFIG_CALL_RET_LINES_PER_FUNC {call_ret_lines_per_func}u\n")
-    out.append(f"#define CONFIG_CALL_RET_REGION_REPS {call_ret_region_reps}u\n")
-    out.append(f"#define CONFIG_CALL_RET_POS {call_ret_pos}u\n")
-
-    out.append(f"#define CONFIG_PLT_STUB_FUNCS {plt_stub_funcs}u\n")
-    out.append(f"#define CONFIG_PLT_STUB_REGION_REPS {plt_stub_region_reps}u\n")
-    out.append(f"#define CONFIG_PLT_STUB_POS {plt_stub_pos}u\n")
-
-    out.append(f"#define CONFIG_INDIRECT_TARGET_COUNT {indirect_target_count}u\n")
-    out.append(f"#define CONFIG_INDIRECT_TARGET_BLOCK_ALIGN {indirect_target_block_align}u\n")
-    out.append(f"#define CONFIG_INDIRECT_TARGET_REGION_REPS {indirect_target_region_reps}u\n")
-    out.append(f"#define CONFIG_INDIRECT_TARGET_POS {indirect_target_pos}u\n")
-
     out.append(f"#define CONFIG_MAIN_TOTAL_BLOCKS {main_total_blocks}u\n")
     out.append(f"#define CONFIG_MAIN_BLOCK_ALIGN {main_block_align}u\n")
     out.append(f"#define CONFIG_MAIN_DIRECT_RUN_LEN {main_direct_run_len}u\n")
     out.append(f"#define CONFIG_MAIN_REGION_REPS {main_region_reps}u\n")
     out.append(f"#define CONFIG_MAIN_POS {main_pos}u\n")
     out.append(f'#define CONFIG_MAIN_LAYOUT_STR "{main_layout}"\n')
+    out.append(f'#define CONFIG_MEMORY_ALLOCATOR_STR "{memory_allocator}"\n')
+    out.append(f'#define CONFIG_MEMORY_ADVICE_STR "{memory_advice}"\n')
+    out.append(f"#define CONFIG_MEMORY_ARENA_GAP_BYTES {memory_arena_gap_bytes}ull\n")
+    out.append(f"#define CONFIG_MEMORY_ARENA_HINT 0x{memory_arena_hint:x}ull\n")
+    out.append(f"#define CONFIG_MEMORY_ARENA_BYTES {memory_arena_bytes}ull\n")
+    out.append(f"#define CONFIG_MEMORY_PREFAULT {memory_prefault}u\n")
+    out.append(f"#define CONFIG_WARMUP_ITERS {warmup_iters}ull\n")
     out.append(f"#define CONFIG_SEED {args.seed}u\n")
 
     out.append(f"#define CONFIG_HOT_L1_ENTRIES_PER_ITER {hot_l1_entries_per_iter}u\n")
-    out.append(f"#define CONFIG_HOT_L2_ENTRIES_PER_ITER {hot_l2_entries_per_iter}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_LOADS_PER_CALL {mixed_region_loads_per_call}u\n")
-    out.append(f"#define CONFIG_MIXED_REGION_ACCESSES_PER_ITER {mixed_region_accesses_per_iter}u\n")
-    for slot in mixed_region_slots[1:]:
-        out.append(f"#define CONFIG_MIXED_REGION_{slot['slot_id']}_LOADS_PER_CALL {slot['loads_per_call']}u\n")
-    out.append(f"#define CONFIG_DATA_STREAM_ACCESSES_PER_CALL {data_stream_accesses_per_call}u\n")
-    out.append(f"#define CONFIG_DATA_STREAM_ACCESSES_PER_ITER {data_stream_accesses_per_iter}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_NODES {data_pointer_chase_nodes}u\n")
-    out.append(f"#define CONFIG_DATA_POINTER_CHASE_ACCESSES_PER_ITER {data_pointer_chase_accesses_per_iter}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_ACCESSES_PER_CALL {data_page_stride_accesses_per_call}u\n")
-    out.append(f"#define CONFIG_DATA_PAGE_STRIDE_ACCESSES_PER_ITER {data_page_stride_accesses_per_iter}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_NODES {data_indirect_gather_node_count}u\n")
-    out.append(f"#define CONFIG_DATA_INDIRECT_GATHER_ACCESSES_PER_ITER {data_indirect_gather_accesses_per_iter}u\n")
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_ACCESSES_PER_CALL {data_hot_stride_access_count}u\n")
-    out.append(f"#define CONFIG_DATA_HOT_STRIDE_ACCESSES_PER_ITER {data_hot_stride_accesses_per_iter}u\n")
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_ACCESSES_PER_CALL {data_cold_stride_access_count}u\n")
-    out.append(f"#define CONFIG_DATA_COLD_STRIDE_ACCESSES_PER_ITER {data_cold_stride_accesses_per_iter}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_ACCESSES_PER_CALL {data_tlb_indirect_access_count}u\n")
-    out.append(f"#define CONFIG_DATA_TLB_INDIRECT_ACCESSES_PER_ITER {data_tlb_indirect_accesses_per_iter}u\n")
     out.append(f"#define CONFIG_FETCH_BLOCK_ENTRIES_PER_ITER {fetch_block_entries_per_iter}u\n")
     out.append(f"#define CONFIG_ITLB_CALLS_PER_ITER {itlb_calls_per_iter}u\n")
-    out.append(f"#define CONFIG_CALL_RET_CALLS_PER_ITER {call_ret_calls_per_iter}u\n")
-    out.append(f"#define CONFIG_PLT_STUB_CALLS_PER_ITER {plt_stub_calls_per_iter}u\n")
-    out.append(f"#define CONFIG_INDIRECT_TARGET_CALLS_PER_ITER {indirect_target_calls_per_iter}u\n")
     out.append(f"#define CONFIG_MAIN_BLOCK_ENTRIES_PER_ITER {main_block_entries_per_iter}u\n")
     out.append(f"#define CONFIG_TOTAL_FRONTEND_UNITS_PER_ITER {total_frontend_units_per_iter}u\n")
     out.append(f"#define CONFIG_FETCH_INDIRECT_BLOCKS_PER_CHAIN {fetch_indirect_blocks_per_chain}u\n")
@@ -1347,71 +841,18 @@ def generate(args: argparse.Namespace) -> str:
     out.append(format_u32_array("kItlbPhysicalOrder", itlb_phys_order))
     out.append(format_u32_array("kItlbExecOrder", itlb_exec_order))
     out.append(format_u32_array("kItlbSamples", itlb_samples))
-    out.append(format_u32_array("kCallRetPhysicalOrder", call_ret_phys_order))
-    out.append(format_u32_array("kCallRetExecOrder", call_ret_exec_order))
-    out.append(format_u32_array("kCallRetSamples", call_ret_samples))
-    out.append(format_u32_array("kMixedRegionOffsets", mixed_region_offsets))
-    for slot in mixed_region_slots[1:]:
-        out.append(format_u32_array(f"kMixedRegion{slot['slot_id']}Offsets", slot["offsets"]))
-    out.append(format_u32_array("kDataPointerChaseOffsets", data_pointer_chase_offsets))
-    out.append(format_u32_array("kDataPageStrideOffsets", data_page_stride_offsets))
-    out.append(format_u32_array("kDataIndirectGatherOffsets", data_indirect_gather_offsets))
-    out.append(format_u32_array("kDataHotStrideOffsets", data_hot_stride_offsets))
-    out.append(format_u32_array("kDataColdStrideOffsets", data_cold_stride_offsets))
-    out.append(format_u32_array("kDataTlbIndirectOffsets", data_tlb_indirect_offsets))
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        symbol = "k" + "".join(part.capitalize() for part in spec["prefix"].split("_")) + "Offsets"
+        out.append(format_u32_array(symbol, slot["offsets"]))
 
-    out.append(MIXED_REGION.emit_storage("mixed_region", "CONFIG_MIXED_REGION_POOL_BYTES"))
-    for slot in mixed_region_slots[1:]:
-        out.append(
-            MIXED_REGION.emit_storage(
-                slot["prefix"],
-                f"CONFIG_MIXED_REGION_{slot['slot_id']}_POOL_BYTES",
-            )
-        )
-    out.append(MODULES.data_stream.emit_stream_storage("data_stream", "CONFIG_DATA_STREAM_SIZE"))
-    out.append(
-        MODULES.data_pointer_chase.emit_pointer_chase_storage(
-            "data_pointer_chase",
-            "CONFIG_DATA_POINTER_CHASE_POOL_BYTES",
-        )
-    )
-    out.append(
-        MODULES.data_page_stride.emit_stream_storage(
-            "data_page_stride",
-            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
-            align=4096,
-        )
-    )
-    out.append(
-        MODULES.data_indirect_gather.emit_indirect_gather_storage(
-            "data_indirect_gather",
-            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
-            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
-        )
-    )
-    out.append(MODULES.data_hot_stride.emit_stream_storage("data_hot_stride", "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES"))
-    out.append(
-        MODULES.data_cold_stride.emit_stream_storage(
-            "data_cold_stride",
-            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
-            align=4096,
-        )
-    )
-    out.append(
-        MODULES.data_tlb_indirect.emit_stream_storage(
-            "data_tlb_indirect",
-            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
-            align=4096,
-        )
-    )
+    for spec in ATTACHED_DATA_SPECS:
+        out.append(MIXED_REGION.emit_storage(spec["prefix"], f"CONFIG_{spec['key'].upper()}_ATTACHED_POOL_BYTES"))
 
     out.append("typedef void (*bench_func_t)(void);\n\n")
     out.append("static void *g_itlb_func_table[CONFIG_ITLB_FUNCS > 0 ? CONFIG_ITLB_FUNCS : 1u];\n")
     out.append("static void *g_fetch_table[CONFIG_FETCH_TOTAL_BLOCKS > 0 ? CONFIG_FETCH_TOTAL_BLOCKS : 1u];\n")
     out.append("static void *g_main_table[CONFIG_MAIN_TOTAL_BLOCKS > 0 ? CONFIG_MAIN_TOTAL_BLOCKS : 1u];\n")
-    out.append(
-        "static void *g_indirect_target_table[CONFIG_INDIRECT_TARGET_COUNT > 0 ? CONFIG_INDIRECT_TARGET_COUNT : 1u];\n\n"
-    )
     out.append(emit_memory_region_allocator())
 
     out.append(
@@ -1436,14 +877,6 @@ def generate(args: argparse.Namespace) -> str:
             '}\n\n'
         )
 
-    if indirect_target_count > 0:
-        out.append(
-            '__attribute__((used, noinline))\n'
-            'static void dispatch_indirect_target(uint64_t idx) {\n'
-            '    ((bench_func_t)g_indirect_target_table[idx])();\n'
-            '}\n\n'
-        )
-
     out.append(
         MODULES.hot_region.emit_region_function(
             "hot_l1_blob",
@@ -1453,136 +886,19 @@ def generate(args: argparse.Namespace) -> str:
         )
     )
     out.append(MODULES.hot_region.emit_region_function("hot_l2_blob", hot_l2_size, hot_l2_align))
-    out.append(
-        MIXED_REGION.emit_init_function(
-            "mixed_region",
-            "kMixedRegionOffsets",
-            "CONFIG_MIXED_REGION_NODE_COUNT",
-        )
-    )
-    for slot in mixed_region_slots[1:]:
+    for spec in ATTACHED_DATA_SPECS:
+        key_upper = spec["key"].upper()
+        symbol = "k" + "".join(part.capitalize() for part in spec["prefix"].split("_")) + "Offsets"
         out.append(
             MIXED_REGION.emit_init_function(
-                slot["prefix"],
-                f"kMixedRegion{slot['slot_id']}Offsets",
-                f"CONFIG_MIXED_REGION_{slot['slot_id']}_NODE_COUNT",
+                spec["prefix"],
+                symbol,
+                f"CONFIG_{key_upper}_ATTACHED_NODE_COUNT",
             )
         )
-    out.append(
-        MIXED_REGION.emit_region_function(
-            "mixed_region",
-            mixed_region_size,
-            mixed_region_ldr_count_per_unit,
-        )
-    )
-    for slot in mixed_region_slots[1:]:
-        out.append(
-            MIXED_REGION.emit_region_function(
-                slot["prefix"],
-                slot["size"],
-                slot["ldr_count_per_unit"],
-            )
-        )
-    out.append(
-        MODULES.data_stream.emit_stream_init_function(
-            "data_stream",
-            "CONFIG_DATA_STREAM_SIZE",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_stream.emit_stream_function(
-            "data_stream",
-            "CONFIG_DATA_STREAM_SIZE",
-            "CONFIG_DATA_STREAM_STRIDE",
-        )
-    )
-    out.append(
-        MODULES.data_pointer_chase.emit_pointer_chase_init_function(
-            "data_pointer_chase",
-            "kDataPointerChaseOffsets",
-            "CONFIG_DATA_POINTER_CHASE_NODE_COUNT",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_pointer_chase.emit_pointer_chase_function(
-            "data_pointer_chase",
-            "CONFIG_DATA_POINTER_CHASE_NODE_COUNT",
-        )
-    )
-    out.append(
-        MODULES.data_page_stride.emit_stream_init_function(
-            "data_page_stride",
-            "CONFIG_DATA_PAGE_STRIDE_POOL_BYTES",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_page_stride.emit_offset_gather_function(
-            "data_page_stride",
-            "kDataPageStrideOffsets",
-            "CONFIG_DATA_PAGE_STRIDE_OFFSET_COUNT",
-        )
-    )
-    out.append(
-        MODULES.data_indirect_gather.emit_indirect_gather_init_function(
-            "data_indirect_gather",
-            "kDataIndirectGatherOffsets",
-            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
-            "CONFIG_DATA_INDIRECT_GATHER_POOL_BYTES",
-            "CONFIG_DATA_INDIRECT_GATHER_INDEX_STRIDE",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_indirect_gather.emit_indirect_gather_function(
-            "data_indirect_gather",
-            "CONFIG_DATA_INDIRECT_GATHER_NODE_COUNT",
-        )
-    )
-    out.append(
-        MODULES.data_hot_stride.emit_stream_init_function(
-            "data_hot_stride",
-            "CONFIG_DATA_HOT_STRIDE_BUFFER_BYTES",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_hot_stride.emit_offset_cycle_function(
-            "data_hot_stride",
-            "kDataHotStrideOffsets",
-            "CONFIG_DATA_HOT_STRIDE_ACCESS_COUNT",
-        )
-    )
-    out.append(
-        MODULES.data_cold_stride.emit_stream_init_function(
-            "data_cold_stride",
-            "CONFIG_DATA_COLD_STRIDE_BUFFER_BYTES",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_cold_stride.emit_offset_cycle_function(
-            "data_cold_stride",
-            "kDataColdStrideOffsets",
-            "CONFIG_DATA_COLD_STRIDE_ACCESS_COUNT",
-        )
-    )
-    out.append(
-        MODULES.data_tlb_indirect.emit_stream_init_function(
-            "data_tlb_indirect",
-            "CONFIG_DATA_TLB_INDIRECT_POOL_BYTES",
-            "CONFIG_SEED",
-        )
-    )
-    out.append(
-        MODULES.data_tlb_indirect.emit_offset_cycle_function(
-            "data_tlb_indirect",
-            "kDataTlbIndirectOffsets",
-            "CONFIG_DATA_TLB_INDIRECT_ACCESS_COUNT",
-        )
-    )
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        out.append(MIXED_REGION.emit_pointer_burst_function(spec["prefix"], slot["loads_per_call"]))
 
     for logical_id in fetch_physical_order:
         out.append(
@@ -1613,33 +929,11 @@ def generate(args: argparse.Namespace) -> str:
             )
         )
 
-    for func_id in call_ret_phys_order:
-        out.append(
-            MODULES.call_ret_chain.emit_function(
-                func_id,
-                call_ret_next_map[func_id],
-                call_ret_lines_per_func,
-            )
-        )
-
-    for func_id in range(plt_stub_funcs):
-        out.append(MODULES.plt_stub_chain.emit_caller(func_id))
-        out.append(MODULES.plt_stub_chain.emit_stub(func_id))
-        out.append(MODULES.plt_stub_chain.emit_callee(func_id))
-
-    for target_id in range(indirect_target_count):
-        out.append(
-            MODULES.indirect_target_set.emit_target_function(
-                target_id,
-                indirect_target_count,
-                indirect_target_block_align,
-                "dispatch_indirect_target",
-            )
-        )
-
     out.append("__attribute__((used, noinline))\n")
     out.append("static void run_hot_l1_once(void) {\n")
     if hot_l1_size > 0:
+        if attached_data_slots["hot_l1"]["pool_bytes"] > 0 and attached_data_slots["hot_l1"]["loads_per_call"] > 0:
+            out.append("    hot_l1_attached_burst();\n")
         out.append("    hot_l1_blob();\n")
     out.append("}\n\n")
 
@@ -1649,72 +943,22 @@ def generate(args: argparse.Namespace) -> str:
         out.append("    hot_l2_blob();\n")
     out.append("}\n\n")
 
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_mixed_region_once(void) {\n")
-    if mixed_region_size > 0 and mixed_region_pages > 0:
-        out.append("    mixed_region_kernel();\n")
-    out.append("}\n\n")
-    for slot in mixed_region_slots[1:]:
-        out.append("__attribute__((used, noinline))\n")
-        out.append(f"static void run_mixed_region_{slot['slot_id']}_once(void) {{\n")
-        if slot["size"] > 0 and slot["pages"] > 0:
-            out.append(f"    {slot['prefix']}_kernel();\n")
-        out.append("}\n\n")
-
-    out.append(emit_memory_layout_printer(mixed_region_slots))
+    out.append(emit_memory_layout_printer(attached_data_slots))
 
     out.append("__attribute__((used, noinline))\n")
     out.append("static void run_fetch_amplifier_once(void) {\n")
     if fetch_total_blocks > 0:
+        if attached_data_slots["fetch"]["pool_bytes"] > 0 and attached_data_slots["fetch"]["loads_per_call"] > 0:
+            out.append("    fetch_attached_burst();\n")
         out.append("    ((bench_func_t)g_fetch_table[0])();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_stream_once(void) {\n")
-    if data_stream_size > 0:
-        out.append("    data_stream_kernel();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_pointer_chase_once(void) {\n")
-    if data_pointer_chase_pages > 0:
-        out.append("    data_pointer_chase_kernel();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_page_stride_once(void) {\n")
-    if data_page_stride_pages > 0:
-        out.append("    data_page_stride_kernel();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_indirect_gather_once(void) {\n")
-    if data_indirect_gather_pages > 0:
-        out.append("    data_indirect_gather_kernel();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_hot_stride_once(void) {\n")
-    if data_hot_stride_access_count > 0:
-        out.append("    data_hot_stride_kernel();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_cold_stride_once(void) {\n")
-    if data_cold_stride_access_count > 0:
-        out.append("    data_cold_stride_kernel();\n")
-    out.append("}\n\n")
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_data_tlb_indirect_once(void) {\n")
-    if data_tlb_indirect_pages > 0:
-        out.append("    data_tlb_indirect_kernel();\n")
     out.append("}\n\n")
 
     out.append("__attribute__((used, noinline))\n")
     out.append("static void run_itlb_region_once(void) {\n")
     if itlb_funcs > 0:
-        out.append('    asm volatile("mov x9, xzr\\n\\t" "mov x10, xzr\\n\\t" ::: "x9", "x10", "cc", "memory");\n')
+        if attached_data_slots["itlb"]["pool_bytes"] > 0 and attached_data_slots["itlb"]["loads_per_call"] > 0:
+            out.append("    itlb_attached_burst();\n")
+        out.append("    asm volatile(\"mov x9, xzr\\n\\t\" \"mov x10, xzr\\n\\t\" ::: \"x9\", \"x10\", \"cc\", \"memory\");\n")
         if itlb_mode == "chain":
             if itlb_exec_order:
                 out.append(f"    itlb_func_{itlb_exec_order[0]}();\n")
@@ -1723,24 +967,11 @@ def generate(args: argparse.Namespace) -> str:
                 out.append(f"    itlb_func_{func_id}();\n")
     out.append("}\n\n")
 
-    out.append(
-        emit_chain_runner(
-            "run_call_ret_chain_once",
-            None if not call_ret_exec_order else f"call_ret_func_{call_ret_exec_order[0]}",
-        )
-    )
-    out.append(emit_direct_call_runner("run_plt_stub_chain_once", "plt_caller", plt_stub_funcs))
-
-    out.append("__attribute__((used, noinline))\n")
-    out.append("static void run_indirect_target_set_once(void) {\n")
-    if indirect_target_count > 0:
-        out.append('    asm volatile("mov x9, xzr\\n\\t" "mov x10, xzr\\n\\t" ::: "x9", "x10", "cc", "memory");\n')
-        out.append("    dispatch_indirect_target(0);\n")
-    out.append("}\n\n")
-
     out.append("__attribute__((used, noinline))\n")
     out.append("static void run_block_loop_once(void) {\n")
     if main_total_blocks > 0:
+        if attached_data_slots["main"]["pool_bytes"] > 0 and attached_data_slots["main"]["loads_per_call"] > 0:
+            out.append("    main_attached_burst();\n")
         out.append("    ((bench_func_t)g_main_table[0])();\n")
     out.append("}\n\n")
 
@@ -1828,46 +1059,24 @@ def generate(args: argparse.Namespace) -> str:
         out.append("    g_main_table[0] = NULL;\n")
     out.append("\n")
 
-    for target_id in range(indirect_target_count):
-        out.append(f"    g_indirect_target_table[{target_id}] = (void *)&indirect_target_{target_id};\n")
-    if indirect_target_count == 0:
-        out.append("    g_indirect_target_table[0] = NULL;\n")
-    out.append("\n")
-
-    out.append(emit_memory_allocation_calls(mixed_region_slots))
+    out.append(emit_memory_allocation_calls(attached_data_slots))
     out.append("\n")
     out.append("    print_memory_layout(iters);\n\n")
 
-    if mixed_region_size > 0 and mixed_region_pages > 0:
-        out.append("    init_mixed_region_pool();\n")
-    for slot in mixed_region_slots[1:]:
-        if slot["size"] > 0 and slot["pages"] > 0:
-            out.append(f"    init_{slot['prefix']}_pool();\n")
-    if data_stream_size > 0:
-        out.append("    init_data_stream_buffer();\n")
-    if data_pointer_chase_pages > 0:
-        out.append("    init_data_pointer_chase_pool();\n")
-    if data_page_stride_pages > 0:
-        out.append("    init_data_page_stride_buffer();\n")
-    if data_indirect_gather_pages > 0:
-        out.append("    init_data_indirect_gather_pool();\n")
-    if data_hot_stride_access_count > 0:
-        out.append("    init_data_hot_stride_buffer();\n")
-    if data_cold_stride_access_count > 0:
-        out.append("    init_data_cold_stride_buffer();\n")
-    if data_tlb_indirect_pages > 0:
-        out.append("    init_data_tlb_indirect_buffer();\n")
-    if (
-        mixed_region_enabled
-        or data_stream_size > 0
-        or data_pointer_chase_pages > 0
-        or data_page_stride_pages > 0
-        or data_indirect_gather_pages > 0
-        or data_hot_stride_access_count > 0
-        or data_cold_stride_access_count > 0
-        or data_tlb_indirect_pages > 0
-    ):
-        out.append("\n")
+    for spec in ATTACHED_DATA_SPECS:
+        slot = attached_data_slots[spec["key"]]
+        if slot["pool_bytes"] > 0 and slot["loads_per_call"] > 0:
+            out.append(f"    init_{spec['prefix']}_pool();\n")
+    out.append("\n")
+
+    out.append("    if (CONFIG_WARMUP_ITERS > 0u) {\n")
+    out.append("        uint64_t warmup_done = 0;\n")
+    out.append("        while (!g_abort && warmup_done < CONFIG_WARMUP_ITERS) {\n")
+    for _, _, reps_macro, enable_macro, body in ordered_module_loops:
+        out.append(emit_module_loop(reps_macro, enable_macro, body))
+    out.append("            ++warmup_done;\n")
+    out.append("        }\n")
+    out.append("    }\n\n")
 
     out.append("    fflush(stdout);\n")
     out.append('    puts("PROXYBENCH_READY");\n')
@@ -1899,26 +1108,25 @@ def generate(args: argparse.Namespace) -> str:
 
 def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
     cfg = dict(flat_cfg)
-    mixed_region_extra_slots = [
-        {
-            "size": int(cfg.get(f"mixed_region_loop_{slot_id}_size", 0)),
-            "ldr_count_per_unit": int(cfg.get(f"mixed_region_loop_{slot_id}_ldr_count_per_unit", 0)),
+
+    def _mixed_slot_extra(slot_id):
+        # canonical names first, fall back to legacy names
+        return {
+            "size": int(cfg.get(f"mixed_region_loop_{slot_id}_instr_size_bytes", cfg.get(f"mixed_region_loop_{slot_id}_size", 0))),
+            "ldr_count_per_unit": int(cfg.get(f"mixed_region_loop_{slot_id}_fusion_ldr_per_unit", cfg.get(f"mixed_region_loop_{slot_id}_ldr_count_per_unit", 0))),
             "data_mode": str(cfg.get(f"mixed_region_loop_{slot_id}_data_mode", "linear")),
-            "pages": int(cfg.get(f"mixed_region_loop_{slot_id}_pages", 1)),
-            "lines_per_page": int(cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8)),
-            "nodes_per_page": int(
-                cfg.get(
-                    f"mixed_region_loop_{slot_id}_nodes_per_page",
-                    cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8),
-                )
-            ),
-            "stride_lines": int(cfg.get(f"mixed_region_loop_{slot_id}_stride_lines", 1)),
-            "stride_pages": int(cfg.get(f"mixed_region_loop_{slot_id}_stride_pages", 1)),
+            "pool_nodes": int(cfg.get(f"mixed_region_loop_{slot_id}_data_pool_nodes", cfg.get(f"mixed_region_loop_{slot_id}_pool_nodes", 0))),
+            "pages": int(cfg.get(f"mixed_region_loop_{slot_id}_data_pages", cfg.get(f"mixed_region_loop_{slot_id}_pages", 1))),
+            "lines_per_page": int(cfg.get(f"mixed_region_loop_{slot_id}_data_nodes_per_page", cfg.get(f"mixed_region_loop_{slot_id}_nodes_per_page", cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8)))),
+            "nodes_per_page": int(cfg.get(f"mixed_region_loop_{slot_id}_data_nodes_per_page", cfg.get(f"mixed_region_loop_{slot_id}_nodes_per_page", cfg.get(f"mixed_region_loop_{slot_id}_lines_per_page", 8)))),
+            "stride_nodes": int(cfg.get(f"mixed_region_loop_{slot_id}_data_stride_nodes", cfg.get(f"mixed_region_loop_{slot_id}_stride_nodes", cfg.get(f"mixed_region_loop_{slot_id}_data_stride_lines", cfg.get(f"mixed_region_loop_{slot_id}_stride_lines", 1))))),
+            "stride_lines": int(cfg.get(f"mixed_region_loop_{slot_id}_data_stride_lines", cfg.get(f"mixed_region_loop_{slot_id}_stride_lines", 1))),
+            "stride_pages": int(cfg.get(f"mixed_region_loop_{slot_id}_data_stride_pages", cfg.get(f"mixed_region_loop_{slot_id}_stride_pages", 1))),
             "region_reps": int(cfg.get(f"mixed_region_loop_{slot_id}_region_reps", 0)),
             "pos": int(cfg.get(f"mixed_region_loop_{slot_id}_pos", 2 + slot_id)),
         }
-        for slot_id in range(1, 7)
-    ]
+
+    mixed_region_extra_slots = [_mixed_slot_extra(slot_id) for slot_id in range(1, 7)]
     return argparse.Namespace(
         out=str(out_path),
         main_blocks=int(cfg["cold_block_sequence_blocks"]),
@@ -1927,6 +1135,14 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         main_region_reps=int(cfg["cold_block_sequence_region_reps"]),
         main_layout=str(cfg["cold_block_sequence_layout"]),
         main_pos=int(cfg["cold_block_sequence_pos"]),
+        main_data_pool_nodes=int(cfg.get("cold_block_sequence_data_pool_nodes", 0)),
+        main_data_pages=int(cfg.get("cold_block_sequence_data_pages", 0)),
+        main_data_nodes_per_page=int(cfg.get("cold_block_sequence_data_nodes_per_page", 8)),
+        main_data_mode=str(cfg.get("cold_block_sequence_data_mode", "linear")),
+        main_data_stride_nodes=int(cfg.get("cold_block_sequence_data_stride_nodes", cfg.get("cold_block_sequence_data_stride_lines", 1))),
+        main_data_stride_lines=int(cfg.get("cold_block_sequence_data_stride_lines", 1)),
+        main_data_stride_pages=int(cfg.get("cold_block_sequence_data_stride_pages", 1)),
+        main_fusion_ldr_per_unit=int(cfg.get("cold_block_sequence_fusion_ldr_per_unit", 0)),
         fetch_blocks=int(cfg["fetch_amplifier_blocks"]),
         fetch_block_align=int(cfg["fetch_amplifier_block_align"]),
         fetch_direct_run_len=int(cfg["fetch_amplifier_direct_run_len"]),
@@ -1935,23 +1151,41 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         fetch_region_reps=int(cfg["fetch_amplifier_region_reps"]),
         fetch_layout=str(cfg["fetch_amplifier_layout"]),
         fetch_pos=int(cfg["fetch_amplifier_pos"]),
+        fetch_data_pool_nodes=int(cfg.get("fetch_amplifier_data_pool_nodes", 0)),
+        fetch_data_pages=int(cfg.get("fetch_amplifier_data_pages", 0)),
+        fetch_data_nodes_per_page=int(cfg.get("fetch_amplifier_data_nodes_per_page", 8)),
+        fetch_data_mode=str(cfg.get("fetch_amplifier_data_mode", "linear")),
+        fetch_data_stride_nodes=int(cfg.get("fetch_amplifier_data_stride_nodes", cfg.get("fetch_amplifier_data_stride_lines", 1))),
+        fetch_data_stride_lines=int(cfg.get("fetch_amplifier_data_stride_lines", 1)),
+        fetch_data_stride_pages=int(cfg.get("fetch_amplifier_data_stride_pages", 1)),
+        fetch_fusion_ldr_per_unit=int(cfg.get("fetch_amplifier_fusion_ldr_per_unit", 0)),
         hot_l1_size=int(cfg["hot_region_loop_size"]),
         hot_l1_branch_pairs_per_unit=int(cfg["hot_region_loop_branch_pairs_per_unit"]),
         hot_l1_region_reps=int(cfg["hot_region_loop_region_reps"]),
         hot_l1_pos=int(cfg["hot_region_loop_pos"]),
+        hot_l1_data_pool_nodes=int(cfg.get("hot_region_loop_data_pool_nodes", 0)),
+        hot_l1_data_pages=int(cfg.get("hot_region_loop_data_pages", 0)),
+        hot_l1_data_nodes_per_page=int(cfg.get("hot_region_loop_data_nodes_per_page", 8)),
+        hot_l1_data_mode=str(cfg.get("hot_region_loop_data_mode", "linear")),
+        hot_l1_data_stride_nodes=int(cfg.get("hot_region_loop_data_stride_nodes", cfg.get("hot_region_loop_data_stride_lines", 1))),
+        hot_l1_data_stride_lines=int(cfg.get("hot_region_loop_data_stride_lines", 1)),
+        hot_l1_data_stride_pages=int(cfg.get("hot_region_loop_data_stride_pages", 1)),
+        hot_l1_fusion_ldr_per_unit=int(cfg.get("hot_region_loop_fusion_ldr_per_unit", 0)),
         hot_l2_size=0,
         hot_l2_region_reps=0,
         hot_l2_pos=max(int(cfg["hot_region_loop_pos"]) + 1, 7),
-        mixed_region_size=int(cfg.get("mixed_region_loop_size", 0)),
-        mixed_region_ldr_count_per_unit=int(cfg.get("mixed_region_loop_ldr_count_per_unit", 0)),
+        mixed_region_size=int(cfg.get("mixed_region_loop_instr_size_bytes", cfg.get("mixed_region_loop_size", 0))),
+        mixed_region_ldr_count_per_unit=int(cfg.get("mixed_region_loop_fusion_ldr_per_unit", cfg.get("mixed_region_loop_ldr_count_per_unit", 0))),
         mixed_region_data_mode=str(cfg.get("mixed_region_loop_data_mode", "linear")),
-        mixed_region_pages=int(cfg.get("mixed_region_loop_pages", 1)),
-        mixed_region_lines_per_page=int(cfg.get("mixed_region_loop_lines_per_page", 8)),
+        mixed_region_pool_nodes=int(cfg.get("mixed_region_loop_data_pool_nodes", cfg.get("mixed_region_loop_pool_nodes", 0))),
+        mixed_region_pages=int(cfg.get("mixed_region_loop_data_pages", cfg.get("mixed_region_loop_pages", 1))),
+        mixed_region_lines_per_page=int(cfg.get("mixed_region_loop_data_nodes_per_page", cfg.get("mixed_region_loop_lines_per_page", 8))),
         mixed_region_nodes_per_page=int(
-            cfg.get("mixed_region_loop_nodes_per_page", cfg.get("mixed_region_loop_lines_per_page", 8))
+            cfg.get("mixed_region_loop_data_nodes_per_page", cfg.get("mixed_region_loop_nodes_per_page", cfg.get("mixed_region_loop_lines_per_page", 8)))
         ),
-        mixed_region_stride_lines=int(cfg.get("mixed_region_loop_stride_lines", 1)),
-        mixed_region_stride_pages=int(cfg.get("mixed_region_loop_stride_pages", 1)),
+        mixed_region_stride_nodes=int(cfg.get("mixed_region_loop_data_stride_nodes", cfg.get("mixed_region_loop_stride_nodes", cfg.get("mixed_region_loop_data_stride_lines", cfg.get("mixed_region_loop_stride_lines", 1))))),
+        mixed_region_stride_lines=int(cfg.get("mixed_region_loop_data_stride_lines", cfg.get("mixed_region_loop_stride_lines", 1))),
+        mixed_region_stride_pages=int(cfg.get("mixed_region_loop_data_stride_pages", cfg.get("mixed_region_loop_stride_pages", 1))),
         mixed_region_region_reps=int(cfg.get("mixed_region_loop_region_reps", 0)),
         mixed_region_pos=int(cfg.get("mixed_region_loop_pos", 2)),
         mixed_region_extra_slots=mixed_region_extra_slots,
@@ -1991,6 +1225,14 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         itlb_mode=str(cfg["itlb_mode"]),
         itlb_direct_run_len=int(cfg["itlb_direct_run_len"]),
         itlb_pos=int(cfg["itlb_pos"]),
+        itlb_data_pool_nodes=int(cfg.get("itlb_data_pool_nodes", 0)),
+        itlb_data_pages=int(cfg.get("itlb_data_pages", 0)),
+        itlb_data_nodes_per_page=int(cfg.get("itlb_data_nodes_per_page", 8)),
+        itlb_data_mode=str(cfg.get("itlb_data_mode", "linear")),
+        itlb_data_stride_nodes=int(cfg.get("itlb_data_stride_nodes", cfg.get("itlb_data_stride_lines", 1))),
+        itlb_data_stride_lines=int(cfg.get("itlb_data_stride_lines", 1)),
+        itlb_data_stride_pages=int(cfg.get("itlb_data_stride_pages", 1)),
+        itlb_fusion_ldr_per_unit=int(cfg.get("itlb_fusion_ldr_per_unit", 0)),
         call_ret_funcs=int(cfg.get("call_ret_funcs", 0)),
         call_ret_lines_per_func=int(cfg.get("call_ret_lines_per_func", 1)),
         call_ret_region_reps=int(cfg.get("call_ret_region_reps", 0)),
@@ -2002,6 +1244,12 @@ def namespace_from_flat_cfg(out_path, flat_cfg) -> argparse.Namespace:
         indirect_target_block_align=int(cfg.get("indirect_target_block_align", 64)),
         indirect_target_region_reps=int(cfg.get("indirect_target_region_reps", 0)),
         indirect_target_pos=int(cfg.get("indirect_target_pos", 6)),
+        memory_allocator=str(cfg.get("memory_allocator", "posix")),
+        memory_advice=str(cfg.get("memory_advice", "default")),
+        memory_arena_gap_bytes=int(cfg.get("memory_arena_gap_bytes", 0)),
+        memory_arena_hint=int(cfg.get("memory_arena_hint", 0)),
+        memory_prefault=int(cfg.get("memory_prefault", 0)),
+        warmup_iters=int(cfg.get("warmup_iters", 0)),
         seed=int(cfg["seed"]),
     )
 

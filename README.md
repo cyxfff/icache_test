@@ -1,222 +1,280 @@
 # icache_test
 
-这个目录现在主要用于验证一种 **instruction + data fused** 的合成模板：在固定大小的指令区域里，把一部分 `nop` 替换成 pointer-chasing load，让同一个模块同时产生 I-side 和 D-side 行为。
+这个仓库现在只保留一条主路径：
 
-当前重点不是旧版的纯 instruction 模块库，而是 `mixed_region_loop` 以及它的多 slot 组合线性实验。
+- 4 个 instruction 模块
+- 每个 instruction 模块都挂载一份 attached-data
+- 用单模块 sweep 和多模块组合实验检查硬件计数是否近似线性相加
 
-## 当前实验模型
+旧的 standalone data 模块和旧的 `mixed_region_loop` 组合入口已经不再作为当前工作流的一部分。
 
-`mixed_region_loop` 的核心形态是：
+**当前模块**
 
-```asm
-mov x11, cursor
+- `hot_region_loop`
+- `fetch_amplifier`
+- `cold_block_sequence`
+- `itlb`
 
-// 每个 64B code unit:
-add x9, x9, #1
-eor x10, x10, x9
-nop / ldr x11, [x11] / nop ...
+## 目录
 
-mov cursor, x11
+- [experiments/experiment_config.py](/home/tchen/icache_test/experiments/experiment_config.py:1)
+  负责定义 instruction 参数扫法、data 模板、single/combo suite
+- [tools/run_single_mixed.py](/home/tchen/icache_test/tools/run_single_mixed.py:1)
+  跑单模块 sweep
+- [tools/run_combo_linearity.py](/home/tchen/icache_test/tools/run_combo_linearity.py:1)
+  跑随机组合线性实验
+- [pipeline.py](/home/tchen/icache_test/pipeline.py:1)
+  把配置展开成 C 源码
+- [modules/mixed_region.py](/home/tchen/icache_test/modules/mixed_region.py:1)
+  负责 attached-data 的 node ring、stride、page traversal、ldr 注入底座
+
+## 运行
+
+单模块 sweep：
+
+```bash
+python3 tools/run_single_mixed.py
 ```
 
-也就是说，每个 active slot 有自己的：
+只跑一部分模块：
 
-- instruction kernel，例如 `mixed_region_kernel`、`mixed_region_1_kernel`
-- data pool，例如 `g_mixed_region_pool`、`g_mixed_region_1_pool`
-- cursor，例如 `g_mixed_region_cursor`、`g_mixed_region_1_cursor`
+```bash
+python3 tools/run_single_mixed.py --modules hot_region_loop fetch_amplifier
+```
+
+组合线性实验：
+
+```bash
+python3 tools/run_combo_linearity.py
+```
+
+先跑一个小样本 smoke：
+
+```bash
+python3 tools/run_combo_linearity.py --total-groups 4 --shuffle-rounds 1
+```
+
+## instruction 参数
+
+### `hot_region_loop`
+
+- `size`
+  指令 footprint，单位 B，内部按 64B 对齐
+- `branch_pairs_per_unit`
+  每个 64B 指令单元里插入多少对 always-not-taken 条件分支
+- `region_reps`
+  每轮外层迭代执行多少次
+
+当前 sweep 在 [experiment_config.py](/home/tchen/icache_test/experiments/experiment_config.py:259)：
+
+- `size`: `4096, 8192`
+- `branch_pairs_per_unit`: `2, 3, 4`
+
+### `fetch_amplifier`
+
+- `blocks`
+  basic block 数量
+- `direct_run_len`
+  连续直接跳转长度
+- `branch_pairs_per_block`
+  每个 block 里插入多少对 always-not-taken 条件分支
+- `block_slots`
+  每个 block 的指令 slot 数
+- `layout`
+  block 物理布局
 - `region_reps`
 
-组合实验不是把多个参数硬塞进同一个函数，而是启用多个独立 slot，然后在主循环里按顺序执行：
+当前 sweep 在 [experiment_config.py](/home/tchen/icache_test/experiments/experiment_config.py:268)：
 
-```c
-while (!g_abort && completed_iters < iters) {
-    for (rep = 0; rep < CONFIG_MIXED_REGION_4_REPS; ++rep)
-        run_mixed_region_4_once();
+- `blocks`: `64, 128`
+- `direct_run_len`: `1, 2, 4, 8`
+- `branch_pairs_per_block`: `0, 1, 2, 4`
+- `block_slots`: 固定 `16`
+- `layout`: 固定 `linear`
 
-    for (rep = 0; rep < CONFIG_MIXED_REGION_6_REPS; ++rep)
-        run_mixed_region_6_once();
+### `cold_block_sequence`
 
-    ++completed_iters;
-}
-```
+- `blocks`
+- `direct_run_len`
+- `layout`
+- `region_reps`
 
-这个顺序执行本身不是线性成立的原因；更关键的是每个 slot 的 code/data/cursor 是独立的，且 data pointer 通过 inline asm operand 显式进入 `x11`，不是依赖跨函数调用保留某个寄存器。
+当前 sweep 在 [experiment_config.py](/home/tchen/icache_test/experiments/experiment_config.py:281)：
 
-## D-stream 的真实含义
+- `blocks`: `1000, 2000, ..., 20000`
+- `direct_run_len`: `1, 2, 4, 8, 16`
+- `layout`: `in_page_shuffle`, `linear`
 
-当前 D 侧是一个 pointer-chasing 环。
+### `itlb`
 
-初始化时会生成一组 offset：
+- `funcs`
+  函数数量，主要控制代码页数量和 ITLB 压力
+- `lines_per_page`
+  每页放几条代码行
+- `mode`
+  当前固定 `chain`
+- `direct_run_len`
+- `region_reps`
 
-```python
-offset = page_index * 4096 + line_index * 64
-```
+当前 sweep 在 [experiment_config.py](/home/tchen/icache_test/experiments/experiment_config.py:290)：
 
-然后把每个节点写成指向下一个节点：
+- `funcs`: `256, 512, 1024, 2048, 4096`
+- `lines_per_page`: `1, 2`
+- `direct_run_len`: `0, 4`
 
-```c
-*(uintptr_t *)(pool + cur) = (uintptr_t)(pool + nxt);
-cursor = (uintptr_t)(pool + offsets[0]);
-```
+## attached-data 参数
 
-运行时反复执行：
+attached-data 不再按旧的“64B cache line 个数”描述，而是按 `8B node` 建模。
 
-```asm
-ldr x11, [x11]
-```
+### 核心语义
 
-所以它确实是“分配一片区域，里面放指针，指向区域内另一个地址，然后把起始地址放进 `x11`，持续 pointer chase”。
+- `data_pool_nodes`
+  pool 中参与 pointer ring 的节点总数
+- `data_nodes_per_page`
+  每页放多少个 node
+- `data_pages`
+  派生出的页数，`ceil(data_pool_nodes / data_nodes_per_page)`
+- `data_mode`
+  ring 的访问顺序
+- `data_stride_nodes`
+  `node_stride` 模式下的步长
+- `data_stride_pages`
+  `page_stride` 模式下的步长
+- `fusion_ldr_per_unit`
+  每个 64B instruction unit 中插入多少条 `ldr x11, [x11]`
+- `region_reps`
 
-## 参数语义
+### 访问模式
 
-当前 sweep 参数在 `test/experiment_config.py` 里定义。D-side 现在按更正交的维度组织：工作集大小、每页节点密度、访问模式，以及只在规则访问 pattern 内部生效的 stride。
+- `linear`
+  按页序、页内 node 序顺次连成 ring
+- `node_stride`
+  在所有 node 的平铺序列上按步长循环
+- `page_stride`
+  页顺序按 stride 循环，页内 node 顺序固定
+- `line_shuffle`
+  当前保留在 runtime 底座里，但默认 sweep 不再使用
+- `random`
+  全局随机打乱
 
-| 参数 | 当前作用 | 注意 |
-| --- | --- | --- |
-| `size` | I-side code payload 大小，当前 4096 或 8192 | 决定每次 kernel 执行多少个 64B code unit |
-| `ldr_count_per_unit` | 每个 64B code unit 插入多少条 `ldr x11, [x11]` | 这是最直接的 I/D 混合密度参数 |
-| `pages` | D pool 页数，pool bytes = `pages * 4096` | 控制 D 工作集上限 |
-| `nodes_per_page` | 每页选几个 64B line 作为 pointer-chain 节点 | 节点会在 4KB 页内均匀摊开，不再总是取前几个 line |
-| `data_mode` | offset 排序方式 | 现在使用 `linear`、`line_stride`、`page_stride`、`random` |
-| `stride_lines` | 只属于 `line_stride` 模式 | `linear/random/page_stride` 不扫这个参数 |
-| `stride_pages` | 只属于 `page_stride` 模式 | `linear/random/line_stride` 不扫这个参数 |
-| `region_reps` | 重复执行 mixed kernel 的次数 | 不是独立 D 参数，而是跟着 fused instruction kernel 一起放大 |
+实现见 [mixed_region.py](/home/tchen/icache_test/modules/mixed_region.py:20) 和 [mixed_region.py](/home/tchen/icache_test/modules/mixed_region.py:102)
 
-`data_mode` 当前推荐四种：
+## data 模板
 
-| mode | 排序方式 | 典型含义 |
-| --- | --- | --- |
-| `linear` | 按页、按 line 顺序访问 | 顺序 pointer chain |
-| `line_stride` | 把所有已选节点展平成一维，再按 `stride_lines` 跳 | 显式控制 line/node stride |
-| `page_stride` | 对 page 按 `stride_pages` 跳，每个选中 line index 都跑一遍 | 显式控制跨页/TLB stride |
-| `random` | 全部节点全局 shuffle | 最大程度打乱访问顺序 |
+data 现在分 3 个模板族，每个模板族内部继续做参数遍历。
 
-旧名字仍兼容：`indirect` 会映射到 `random`，`cross_page` 会映射到 `page_stride`，`page_shuffle` 会映射到 `line_shuffle`。新的随机 combo sweep 不再包含 `pages=1`，也不会生成 `line_stride + nodes_per_page=1` 这种明显退化 case。
+定义见 [experiment_config.py](/home/tchen/icache_test/experiments/experiment_config.py:135)
 
-也就是说，`stride` 不是全局主轴；它只是 `line_stride/page_stride` 这两个规则访问 pattern 的内部参数，避免把 `access_pattern` 的含义混掉。
+### `hot`
 
-## 组合线性判断
+目标：小 data pool，尽量留在小 cache 层级里，观察高命中、预取、短 stride 的影响
 
-`run_combo_linearity.py` 会生成 `output/combo_linearity.csv`，并在 benchmark 结束后用 `render_combo_linearity_md.py` 从 CSV 重新生成 `output/combo_linearity.md`。
+- pool 大小：`2k, 4k, 8k, 16k`
+- mode：`node_stride`, `random`
+- `data_nodes_per_page`：固定 dense，等于 `512`
+- `data_stride_nodes`：`1, 2, 4, 8, 16, 32, 64, 128`
 
-每个 combo case 通常包含：
+### `cold`
 
-- 多条 `single` 行：每个 slot 单独运行的 raw count
-- 一条 `canonical` 行：按原顺序组合运行
-- 一条 `shuffle_...` 行：换顺序组合运行
-- 一条 `sum` 行：把 single raw count 直接求和得到的预测值
+目标：让工作集逐渐跨出 L1D、L2、LLC，重点看 D-cache 容量效应，不主动制造 DTLB 压力
 
-判断线性时应比较：
+- pool 大小：`64k, 128k, 256k, 512k, 1m, 2m, 4m`
+- mode：`node_stride`, `random`
+- `data_nodes_per_page`：固定 dense，等于 `512`
+- `data_stride_nodes`：`1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048`
 
-```text
-canonical 或 shuffle 实测值
-vs
-sum 行预测值
-```
+### `dtlb`
 
-当前完整结果的主要观察是：
+目标：显式制造跨页访问，主要打 DTLB，不再追求 cache 层级拟合
 
-- `instructions:u` 非常线性。
-- `br_retired:u` 非常线性。
-- `l1d_cache_refill:u` 和 `l1d_tlb_refill:u` 大体线性。
-- `l2d_cache_refill:u` 有一定交互，但多数样本仍可用。
-- `cpu-cycles:u` 不稳定，不适合作为线性 raw vector 的核心维度。
-- `ll_cache_miss:u` 不稳定。
-- I-side refill 类 counter 的相对误差很大，但多数 expected MPKI 极低，不能简单按相对误差判死刑。
+- pool 大小：`16m, 32m, 64m, 128m, 256m, 512m, 1g`
+- mode：`page_stride`, `random`
+- `data_nodes_per_page`：`1, 2, 4, 8`
+- `data_stride_pages`：`1, 2, 3, 4, 5, 7, 9, 17, 33, 65, 129, 257`
 
-推荐线性筛选时加入 MPKI 门槛：
+## case label
 
-```text
-如果 single-sum expected MPKI < 0.1，则该 counter 在该 combo 上忽略。
-```
+case label 由 instruction 前缀和 attached-data 后缀组成。
 
-这样可以避免把几百、几千级别的低基数噪声放大成“几倍相对误差”。
-
-## 组合约束
-
-随机组合选择逻辑在 `test/runner.py`。
-
-当前有一个保护：
-
-```python
-if cases and all(is_hot_booster_case(case) for case in cases):
-    continue
-```
-
-也就是组合不会全部由 hot booster 组成。
-
-不过当前 `combo_linearity` suite 实际只使用 `mixed_region_loop` slots，且 `ldr_count_per_unit` 取值是 `1, 2, 4, 7, 14`，因此没有纯 hot/no-ldr mixed case。
-
-## 地址输出
-
-benchmark 启动后会打印 memory layout。注意：CSV 里不保存 layout，因此由 CSV 重新生成的 `combo_linearity.md` 只包含 count 表，不包含地址快照。
-
-现在 layout 里包含两类行：
+例子：
 
 ```text
-data_region kind=mixed-data name=mixed_region_loop_4 start=0x... end=0x... bytes=... pages=... nodes=... reps=...
-code_region kind=mixed-code name=mixed_region_loop_4 symbol=mixed_region_4_kernel entry=0x... end=0x... bytes=... cache_lines=... ldr_per_unit=... reps=... source=nm+objdump
+hot_b64_bp2_r100_hot_2k_nstr_n256_p1_np512_l1_sn1
 ```
 
-`data_region` 是真实 data pool 虚拟地址范围。只打印 `reps > 0` 的 active data pool；组合实验里未启用 slot 的占位 pool 不会出现在报告中。
+拆开看：
 
-`nodes` 是 pointer-chain 里的节点数，也就是本次 data pool 中会被串起来的 cache-line offset 数量。对 `mixed_region_loop` 来说，通常等于 `pages * lines_per_page`。例如 `pages=128, lines_per_page=4` 时，`nodes=512`。
+- `hot_b64_bp2_r100`
+  `hot_region_loop`
+  `b64` 表示 64 个 64B unit，也就是 `4096B`
+  `bp2` 表示 `branch_pairs_per_unit=2`
+  `r100` 表示 `region_reps=100`
+- `hot_2k_nstr_n256_p1_np512_l1_sn1`
+  `data_template=hot`
+  `data_level=2k`
+  `nstr` 表示 `node_stride`
+  `n256` 表示 `data_pool_nodes=256`
+  `p1` 表示 `data_pages=1`
+  `np512` 表示 `data_nodes_per_page=512`
+  `l1` 表示 `fusion_ldr_per_unit=1`
+  `sn1` 表示 `data_stride_nodes=1`
 
-`code_region entry/end/bytes` 是编译完成后从 ELF 符号大小和 `objdump -d` 反汇编结果回填出来的函数边界。C 运行时仍会先打印入口地址，但 Python runner 会在 `run_one()` 返回前用构建产物重写 `code_region` 行，因此 combo 报告、单模块 Markdown 报告、以及直接跑单模块脚本的 stdout 都使用同一套严格边界。
+label 格式实现见 [csv_layout.py](/home/tchen/icache_test/experiments/csv_layout.py:68)
 
-`cache_lines` 是严格函数字节数按 64B 向上取整后的 footprint，`ldr_per_unit` 是每个 64B instruction unit 中注入的 `ldr x11, [x11]` 条数，`reps` 是每个 benchmark outer iteration 内重复调用该 mixed kernel 的次数。
+## 内存策略
 
-如果需要手工复核函数边界，可以在构建产物上用：
+组合实验默认使用：
 
-```bash
-nm -n build/combo_linearity_probe
-objdump -d build/combo_linearity_probe
-```
+- `allocator=arena`
+- `prefault=1`
+- `warmup_iters=1`
 
-## Markdown 报告生成
+含义：
 
-CSV 只能重新生成 count-only 版本；它不含运行时地址快照。默认脚本会把 count-only 报告写到 `combo_linearity_counts.md`，避免覆盖带 layout 的 `combo_linearity.md`。
+- `arena`
+  所有 attached-data region 从同一个大 `mmap` arena 中切出来，虚拟地址更可控
+- `prefault=1`
+  测量前逐页 touch，排除首次缺页噪声
+- `warmup_iters=1`
+  在 perf 统计前先跑一轮完整工作负载
 
-```bash
-python3 render_combo_linearity_md.py \
-  --csv output/combo_linearity.csv \
-  --out output/combo_linearity_counts.md
-```
+内存布局会在运行输出里打印：
 
-默认使用较短的 core raw-count 指标，方便阅读。如果要展开所有 raw count：
+- `arena_span`
+- 每个 `data_region`
+- 每个 `code_region`
 
-```bash
-python3 render_combo_linearity_md.py --metric-set raw
-```
+## 输出
 
-## Fit Target
+### `output/*.csv`
 
-`fit/raw_count_sparse_solver.py` 现在不再固定旧的 11-D I-side raw 向量。`fit/fitter_config.py` 中的 `raw_vector_metrics="auto"` 会根据 `target` 能推导出的 raw count 自动选择维度：如果 target 只有 branch/I-cache/I-TLB 指标，就保持旧 11 维；如果加入 `l1d_*`、`l2d_*`、`ll_*` 这类 D-cache/D-TLB/LLC 指标，solver 会自动把对应 raw events 纳入线性求解空间。
+原始结果表。主组合实验默认写：
 
-注意不要用占位数字填 D-side target。应先从 app target 实测得到 `l1d_cache_mpki`、`l1d_cache_refill_mpki`、`l1d_tlb_mpki`、`l1d_tlb_refill_mpki` 等指标，再写入 `fit/fitter_config.py` 的 `target`。
+- `output/combo_linearity.csv`
 
-## 常用命令
+### `output/*.md`
 
-```bash
-# 跑当前 fused I+D combo 线性实验
-python3 run_combo_linearity.py
+把 CSV 转成更适合人工看的摘要表。
 
-# 输出目录默认是 output/
-python3 run_combo_linearity.py --output-dir output
+### CSV 主要字段
 
-# 服务器/设备封装入口
-python3 run_server.py
-```
+当前 CSV 首列只保留当前主路径所需字段：
 
-## 关键文件
+- `suite, case, order_tag, modules`
+- `hot_region_loop_*`
+- `fetch_amplifier_*`
+- `cold_block_sequence_*`
+- `itlb_*`
+- `seed, opt_level, iters, warmup_iters, rounds, cpu_core`
+- `memory_allocator, memory_advice, memory_arena_gap_bytes, memory_arena_hint, memory_prefault`
+- 原始 perf counters
+- 派生指标：miss rate、MPKI、IPC
 
-| 文件 | 作用 |
-| --- | --- |
-| `modules/mixed_region.py` | mixed instruction+data 模板，包含 pointer-chain 初始化和 `ldr x11, [x11]` 注入 |
-| `pipeline.py` | 生成最终 C benchmark，包括 slot、主循环、memory/code layout 输出 |
-| `test/experiment_config.py` | 当前 sweep 和 combo suite 参数 |
-| `test/runner.py` | 单 case、combo、shuffle、sum 行生成逻辑 |
-| `run_combo_linearity.py` | 当前 combo 线性实验入口 |
-| `render_combo_linearity_md.py` | 从 `combo_linearity.csv` 重新生成可读 Markdown count 报告 |
-| `output/combo_linearity.csv` | raw count 结果 |
-| `output/combo_linearity.md` | 由 CSV 生成的每个 combo 可读 count 报告 |
+这些字段来自 [config.py](/home/tchen/icache_test/config/config.py:398)
+
+## 当前约定
+
+- 默认研究对象只有 4 个 instruction 模块
+- data 一律通过 attached-data 注入
+- 不再维护旧 standalone data 路径
+- 不再维护旧 `mixed_region_loop` 组合入口

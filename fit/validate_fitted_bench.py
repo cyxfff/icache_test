@@ -28,8 +28,10 @@ else:
 VALIDATE_CONFIG = {
     "artifact_stem": "fitted_validate",
     "validation_csv": "fitted_bench_validation.csv",
-    "plan_json": FIT_CONFIG["best_result_json"],
-    # "plan_json": FIT_CONFIG["raw_count_sparse_solver_best_json"],
+    # Default to raw_count_sparse_solver best result; can be overridden via argv[1]
+    "plan_json": FIT_CONFIG.get("search_config", {}).get(
+        "best_result_json", "output/raw_count_sparse_solver_best.json"
+    ),
 }
 
 def load_plan(path):
@@ -395,7 +397,7 @@ def main():
     base_cfg["run"]["iters"] = 1
     knobs = build_knobs(root, artifact_stem=VALIDATE_CONFIG["artifact_stem"])
 
-    plan_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(VALIDATE_CONFIG["plan_json"])
+    plan_path = Path(sys.argv[1]) if len(sys.argv) > 1 else root / VALIDATE_CONFIG["plan_json"]
     # print(plan_path)
     plan_record = load_plan(plan_path)
     instances = build_instances_from_plan(plan_record)

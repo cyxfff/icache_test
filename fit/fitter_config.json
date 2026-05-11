@@ -1,0 +1,73 @@
+{
+  "output_dir": null,
+  "csv_files": ["merge_module_library.csv"],
+  "outer_iters": 1000,
+  "fit_total_instructions": 1000000000,
+  "raw_vector_metrics": "auto",
+  "stable_low_mpki_threshold": 1.0,
+  "parallel_workers": 128,
+  "parallel_chunk_size": 64,
+  "result_csv": null,
+  "result_json": null,
+  "best_result_json": null,
+
+  "_comment_count_scale": "Metrics with MPKI >= count_scale_mpki_threshold are 'large counts': they are divided by 10000 in NNLS and multiplied by reps when combining. Metrics below the threshold are 'small counts': used as-is in NNLS and not scaled by reps (reps treated as 1).",
+  "count_scale_mpki_threshold": 0.5,
+
+  "_comment_search_config": "Beam search / NNLS solver parameters.",
+  "search_config": {
+    "max_templates": 100,
+    "seed_beam": 96,
+    "beam_size": 128,
+    "expand_per_state": 100,
+    "max_nnls_iter": 80000,
+    "tolerance": 0.01,
+    "top_k": 50,
+    "parallel_workers": 128,
+    "parallel_batch_size": 16,
+    "log_path": "output/raw_count_sparse_solver.log",
+    "result_json": "output/raw_count_sparse_solver_results.json",
+    "best_result_json": "output/raw_count_sparse_solver_best.json"
+  },
+  "target": {
+    "br_miss_rate": 0.02987,
+    "br_mis_pred_mpki": 4.407,
+    "br_retired_mpki": 147.55,
+
+    "l1i_miss_rate": 6.35e-5,
+    "l1i_cache_mpki": 248.95,
+    "l1i_cache_refill_mpki": 0.01582,
+
+    "l1i_tlb_miss_rate": 1.92e-8,
+    "l1i_tlb_mpki": 248.95,
+    "l1i_tlb_refill_mpki": 4.77e-6,
+
+    "l2i_miss_rate": 0.1769,
+    "l2i_cache_mpki": 0.01582,
+    "l2i_cache_refill_mpki": 0.002798,
+
+    "l2i_tlb_miss_rate": 0.6453,
+    "l2i_tlb_mpki": 6.82e-6,
+    "l2i_tlb_refill_mpki": 4.40e-6,
+
+    "l1d_miss_rate": 0.03854,
+    "l1d_cache_mpki": 210.00,
+    "l1d_cache_refill_mpki": 8.093,
+
+    "l1d_tlb_miss_rate": 0.007261,
+    "l1d_tlb_mpki": 230.42,
+    "l1d_tlb_refill_mpki": 1.673,
+
+    "l2d_miss_rate": 0.05465,
+    "l2d_cache_mpki": 29.94,
+    "l2d_cache_refill_mpki": 1.636,
+
+    "l2d_tlb_miss_rate": 0.004949,
+    "l2d_tlb_mpki": 1.865,
+    "l2d_tlb_refill_mpki": 0.009230,
+
+    "ll_miss_rate": 0.4343,
+    "ll_cache_mpki": 1.484,
+    "ll_cache_miss_mpki": 0.6446
+  }
+}

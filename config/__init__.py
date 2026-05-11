@@ -4,7 +4,6 @@ from .config import (
     ACTIVE_PROFILE,
     DERIVED_KEYS,
     METRIC_KEYS,
-    MIXED_REGION_SLOT_COUNT,
     PROFILE_PRESETS,
     build_base_cfg,
     build_csv_headers,

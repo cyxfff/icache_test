@@ -282,6 +282,129 @@ def compile_bin(
     if completed.stderr:
         print(completed.stderr, end="", file=sys.stderr)
 
+def generate_source_only(cfg, knobs=None, out_c=None):
+    knobs = knobs or {}
+    out_c = out_c or knobs.get("out_c")
+    if not out_c:
+        raise ValueError("missing out_c")
+
+    flat_cfg = flatten_if_needed(cfg)
+    generate_c(out_c, cfg)
+    return flat_cfg
+
+
+def compile_binary_only(
+    cfg,
+    knobs=None,
+    out_c=None,
+    out_bin=None,
+    cc=None,
+    target=None,
+    sysroot=None,
+    extra_cflags=None,
+    extra_ldflags=None,
+):
+    knobs = knobs or {}
+
+    out_c = out_c or knobs.get("out_c")
+    out_bin = out_bin or knobs.get("out_bin")
+    cc = cc or knobs.get("cc")
+
+    if not out_c:
+        raise ValueError("missing out_c")
+    if not out_bin:
+        raise ValueError("missing out_bin")
+    if not cc:
+        raise ValueError("missing cc")
+
+    flat_cfg = flatten_if_needed(cfg)
+
+    merged_cflags = list(knobs.get("extra_cflags") or [])
+    if extra_cflags:
+        merged_cflags.extend(extra_cflags)
+
+    merged_ldflags = list(knobs.get("extra_ldflags") or [])
+    if extra_ldflags:
+        merged_ldflags.extend(extra_ldflags)
+
+    compile_bin(
+        cc,
+        out_c,
+        out_bin,
+        flat_cfg,
+        target=target if target is not None else knobs.get("target"),
+        sysroot=sysroot if sysroot is not None else knobs.get("sysroot"),
+        extra_cflags=merged_cflags,
+        extra_ldflags=merged_ldflags,
+    )
+
+    return Path(out_bin)
+
+
+def build_offline_binary(cfg, knobs):
+    """
+    本地 prepare 阶段使用：
+    生成 .c + 交叉编译 binary。
+    不运行。
+    """
+    flat_cfg = generate_source_only(cfg, knobs=knobs)
+    compile_binary_only(flat_cfg, knobs=knobs)
+    return flat_cfg
+
+
+def parse_runner_output_only(
+    output,
+    knobs,
+    cfg=None,
+    binary_path=None,
+    append_derived_summary=True,
+):
+    """
+    本地 analyze 阶段使用：
+    解析远程 run.sh 产生的 log 文本。
+    不运行。
+    """
+    parsed_output = output
+
+    if binary_path is None:
+        binary_path = knobs.get("out_bin")
+
+    if binary_path:
+        parsed_output = enrich_code_regions_from_binary(parsed_output, binary_path)
+
+    metrics = parse_runner_metrics(
+        parsed_output,
+        knobs["events"],
+        knobs["metric_groups"],
+        knobs["metric_aliases"],
+        normalize_to_event=knobs.get("normalize_to_event"),
+        group_marker=knobs.get("group_marker", "===== perf group ====="),
+        runner_label=Path(knobs.get("runner_sh", "runner")).name,
+    )
+
+    derived = calc_derived(metrics)
+
+    row = {}
+    if cfg is not None:
+        row.update(flatten_if_needed(cfg))
+    row.update(metrics)
+    row.update(derived)
+
+    if append_derived_summary:
+        parsed_output = parsed_output + format_derived_summary(derived)
+
+    return row, parsed_output
+
+
+def parse_run_log_file(log_path, knobs, cfg=None, binary_path=None):
+    log_path = Path(log_path)
+    raw_output = log_path.read_text(encoding="utf-8", errors="replace")
+    return parse_runner_output_only(
+        raw_output,
+        knobs,
+        cfg=cfg,
+        binary_path=binary_path,
+    )
 
 CODE_REGION_RE = re.compile(
     r"^code_region kind=(?P<kind>\S+) name=(?P<name>\S+)"

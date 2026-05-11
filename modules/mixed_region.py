@@ -6,10 +6,20 @@ from typing import List
 class MixedRegionBuilder:
     CACHE_LINE_BYTES = 64
     PAGE_BYTES = 4096
+    NODE_BYTES = 8
     UNIT_INSNS = 16
     FIXED_INSNS = 2
+    INSTR_FAMILY_CHOICES = (
+        "hot_loop",
+        "block_chain",
+        "fetch_amplifier",
+        "itlb_walk",
+        "call_ret",
+        "indirect_target",
+    )
     DATA_MODE_CHOICES = (
         "linear",
+        "node_stride",
         "line_stride",
         "page_stride",
         "line_shuffle",
@@ -20,6 +30,7 @@ class MixedRegionBuilder:
         "indirect",
     )
     DATA_MODE_ALIASES = {
+        "line_stride": "node_stride",
         "page_shuffle": "line_shuffle",
         "cross_page": "page_stride",
         "indirect": "random",
@@ -38,11 +49,11 @@ class MixedRegionBuilder:
 
     @classmethod
     def normalize_lines_per_page(cls, lines_per_page: int) -> int:
-        return max(1, min(cls.PAGE_BYTES // cls.CACHE_LINE_BYTES, int(lines_per_page)))
+        return cls.normalize_nodes_per_page(lines_per_page)
 
     @classmethod
     def normalize_nodes_per_page(cls, nodes_per_page: int) -> int:
-        return cls.normalize_lines_per_page(nodes_per_page)
+        return max(1, min(cls.PAGE_BYTES // cls.NODE_BYTES, int(nodes_per_page)))
 
     @staticmethod
     def normalize_stride(stride: int) -> int:
@@ -73,12 +84,19 @@ class MixedRegionBuilder:
             raise ValueError(f"unsupported mixed-region data mode: {mode}")
         return cls.DATA_MODE_ALIASES.get(mode, mode)
 
-    def selected_line_indices(self, nodes_per_page: int) -> List[int]:
+    @classmethod
+    def normalize_instr_family(cls, instr_family: str) -> str:
+        family = str(instr_family)
+        if family not in cls.INSTR_FAMILY_CHOICES:
+            raise ValueError(f"unsupported mixed-region instruction family: {family!r}; choose from {cls.INSTR_FAMILY_CHOICES}")
+        return family
+
+    def selected_node_offsets(self, nodes_per_page: int) -> List[int]:
         nodes_per_page = self.normalize_nodes_per_page(nodes_per_page)
-        lines_per_page = self.PAGE_BYTES // self.CACHE_LINE_BYTES
+        page_nodes = self.PAGE_BYTES // self.NODE_BYTES
         return [
-            (index * lines_per_page) // nodes_per_page
-            for index in range(nodes_per_page)
+            ((idx * page_nodes) // nodes_per_page) * self.NODE_BYTES
+            for idx in range(nodes_per_page)
         ]
 
     def build_pointer_offsets(
@@ -90,6 +108,7 @@ class MixedRegionBuilder:
         stride_lines: int = 1,
         stride_pages: int = 1,
         nodes_per_page: int = None,
+        stride_nodes: int = None,
     ) -> List[int]:
         page_count = self.normalize_pages(page_count)
         nodes_per_page = self.normalize_nodes_per_page(
@@ -100,36 +119,39 @@ class MixedRegionBuilder:
             return []
 
         rng = random.Random(seed ^ 0x6C8E9CF5)
-        line_indices = self.selected_line_indices(nodes_per_page)
+        node_offsets = self.selected_node_offsets(nodes_per_page)
         all_offsets = [
-            page_index * self.PAGE_BYTES + line_index * self.CACHE_LINE_BYTES
-            for page_index in range(page_count)
-            for line_index in line_indices
+            page_idx * self.PAGE_BYTES + node_offset
+            for page_idx in range(page_count)
+            for node_offset in node_offsets
         ]
         if data_mode == "linear":
             return all_offsets
 
         if data_mode == "line_shuffle":
             offsets: List[int] = []
-            for page_index in range(page_count):
-                line_order = list(line_indices)
-                rng.shuffle(line_order)
-                base = page_index * self.PAGE_BYTES
-                for line_index in line_order:
-                    offsets.append(base + line_index * self.CACHE_LINE_BYTES)
+            for page_idx in range(page_count):
+                node_order = list(node_offsets)
+                rng.shuffle(node_order)
+                base = page_idx * self.PAGE_BYTES
+                for node_offset in node_order:
+                    offsets.append(base + node_offset)
             return offsets
 
-        if data_mode == "line_stride":
-            step = self.normalize_cycle_stride(len(all_offsets), stride_lines)
-            return [all_offsets[(index * step) % len(all_offsets)] for index in range(len(all_offsets))]
+        if data_mode == "node_stride":
+            step = self.normalize_cycle_stride(
+                len(all_offsets),
+                stride_lines if stride_nodes is None else stride_nodes,
+            )
+            return [all_offsets[(idx * step) % len(all_offsets)] for idx in range(len(all_offsets))]
 
         if data_mode == "page_stride":
             page_step = self.normalize_cycle_stride(page_count, stride_pages)
-            page_order = [(index * page_step) % page_count for index in range(page_count)]
+            page_order = [(idx * page_step) % page_count for idx in range(page_count)]
             offsets: List[int] = []
-            for line_index in line_indices:
-                for page_index in page_order:
-                    offsets.append(page_index * self.PAGE_BYTES + line_index * self.CACHE_LINE_BYTES)
+            for node_offset in node_offsets:
+                for page_idx in page_order:
+                    offsets.append(page_idx * self.PAGE_BYTES + node_offset)
             return offsets
 
         rng.shuffle(all_offsets)
@@ -156,7 +178,6 @@ class MixedRegionBuilder:
             f"        uint32_t cur = {offsets_symbol}[idx];\n"
             f"        uint32_t nxt = {offsets_symbol}[(idx + 1) % {count_macro}];\n"
             f"        *(uintptr_t *)(g_{prefix}_pool + cur) = (uintptr_t)(g_{prefix}_pool + nxt);\n"
-            f"        *(uint64_t *)(g_{prefix}_pool + cur + 8u) = (uint64_t)(cur ^ nxt ^ idx);\n"
             "    }\n"
             f"    g_{prefix}_cursor = (uintptr_t)(g_{prefix}_pool + {offsets_symbol}[0]);\n"
             "}\n\n"
@@ -169,8 +190,8 @@ class MixedRegionBuilder:
         if ldr_count == 0:
             return []
         return [
-            ((slot + 1) * filler_slots) // ldr_count
-            for slot in range(ldr_count)
+            ((slot_idx + 1) * filler_slots) // ldr_count
+            for slot_idx in range(ldr_count)
         ]
 
     @classmethod
@@ -188,8 +209,8 @@ class MixedRegionBuilder:
             return "".join(out)
 
         pending_nops = 0
-        for slot in range(1, filler_slots + 1):
-            if slot not in ldr_positions:
+        for slot_idx in range(1, filler_slots + 1):
+            if slot_idx not in ldr_positions:
                 pending_nops += 1
                 continue
 
@@ -256,6 +277,46 @@ class MixedRegionBuilder:
                 "    }\n"
                 f"    g_{prefix}_cursor = cursor;\n"
                 f"    g_{prefix}_sink = acc;\n"
+                "}\n",
+                "#endif\n\n",
+            ]
+        )
+        return "".join(out)
+
+    @classmethod
+    def emit_pointer_burst_function(cls, prefix: str, load_count: int) -> str:
+        load_count = max(0, int(load_count))
+        if load_count <= 0:
+            return ""
+
+        out = [
+            "#if defined(__aarch64__)\n",
+            "__attribute__((used, noinline))\n",
+            f"static void {prefix}_burst(void) {{\n",
+            f"    uintptr_t cursor = g_{prefix}_cursor;\n",
+            "    if (cursor == 0) return;\n",
+            "    asm volatile(\n",
+            '        "mov x11, %[cursor]\\n\\t"\n',
+        ]
+        for _ in range(load_count):
+            out.append('        "ldr x11, [x11]\\n\\t"\n')
+        out.extend(
+            [
+                '        "mov %[cursor], x11\\n\\t"\n',
+                "        : [cursor] \"+r\"(cursor)\n",
+                "        :\n",
+                '        : "x11", "memory");\n',
+                f"    g_{prefix}_cursor = cursor;\n",
+                "}\n\n",
+                "#else\n",
+                "__attribute__((used, noinline))\n",
+                f"static void {prefix}_burst(void) {{\n",
+                f"    uintptr_t cursor = g_{prefix}_cursor;\n"
+                "    if (cursor == 0) return;\n"
+                f"    for (uint32_t idx = 0; idx < {load_count}u; ++idx) {{\n"
+                "        cursor = *(uintptr_t *)cursor;\n"
+                "    }\n"
+                f"    g_{prefix}_cursor = cursor;\n"
                 "}\n",
                 "#endif\n\n",
             ]
